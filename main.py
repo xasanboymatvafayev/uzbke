@@ -61,7 +61,7 @@ class Config:
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     SHOP_CHANNEL_ID = os.getenv("SHOP_CHANNEL_ID")
     COURIER_CHANNEL_ID = os.getenv("COURIER_CHANNEL_ID")
-    WEBAPP_URL = os.getenv("WEBAPP_URL", "https://yourdomain.com/webapp")
+    WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mainsufooduz.netlify.app/webapp")
     MIN_ORDER_AMOUNT = 50000  # 50,000 сум
     
     @staticmethod
@@ -247,13 +247,47 @@ static_dir = Path("static")
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# main.py'ning CORS qismini yangilang:
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        # Frontend domain'lar
+        "https://mainsufooduz.netlify.app",
+        "https://*.netlify.app",
+        
+        # Telegram Web
+        "https://web.telegram.org",
+        "https://telegram.org",
+        "https://*.telegram.org",
+        
+        # Backend
+        "https://uzbke-production.up.railway.app",
+        
+        # Local development
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8080",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# OPTIONS request'lar uchun handler
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    return JSONResponse(
+        content={"status": "ok"},
+        headers={
+            "Access-Control-Allow-Origin": "https://mainsufooduz.netlify.app",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true"
+        }
+    )
 
 # ============================================================================
 # Telegram InitData Verification
