@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import json
 import secrets
 import string
-
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -243,6 +243,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, title="Food Delivery API")
 
 # Mount static files for WebApp
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
