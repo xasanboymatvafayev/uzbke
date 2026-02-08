@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Telegram Food Delivery System - Complete Backend for Railway
-Production-ready system with your credentials
+Telegram Food Delivery System - Complete Backend
+Тулик ишлайдиган версия
 """
 
 import asyncio
@@ -30,7 +30,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from pydantic import BaseModel
 import redis.asyncio as redis
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -38,7 +38,7 @@ import hashlib
 import hmac
 
 # ============================
-# Configuration - Your Credentials
+# Конфигурация
 # ============================
 
 @dataclass
@@ -60,7 +60,7 @@ class Config:
 config = Config()
 
 # ============================
-# Database Models
+# Модели базы данных
 # ============================
 
 class OrderStatus(str, Enum):
@@ -89,7 +89,7 @@ class WebAppOrderData(BaseModel):
     created_at_client: str
 
 # ============================
-# Database Layer
+# Слой базы данных
 # ============================
 
 class Database:
@@ -98,8 +98,18 @@ class Database:
         self.pool = None
     
     async def connect(self):
-        self.pool = await asyncpg.create_pool(self.connection_string, min_size=1, max_size=10)
-        await self.init_db()
+        try:
+            self.pool = await asyncpg.create_pool(
+                self.connection_string, 
+                min_size=1, 
+                max_size=10,
+                command_timeout=60
+            )
+            await self.init_db()
+            logging.info("✅ Database connected successfully")
+        except Exception as e:
+            logging.error(f"❌ Database connection failed: {e}")
+            raise
     
     async def init_db(self):
         async with self.pool.acquire() as conn:
@@ -120,7 +130,8 @@ class Database:
                 CREATE TABLE IF NOT EXISTS categories (
                     id SERIAL PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
-                    is_active BOOLEAN DEFAULT TRUE
+                    is_active BOOLEAN DEFAULT TRUE,
+                    sort_order INTEGER DEFAULT 0
                 )
             ''')
             
@@ -203,18 +214,18 @@ class Database:
             categories_count = await conn.fetchval("SELECT COUNT(*) FROM categories")
             if categories_count == 0:
                 sample_categories = [
-                    ("Lavash",),
-                    ("Burger",),
-                    ("Xaggi",),
-                    ("Shaurma",),
-                    ("Hotdog",),
-                    ("Combo",),
-                    ("Sneki",),
-                    ("Sous",),
-                    ("Napitki",)
+                    ("Lavash", 1),
+                    ("Burger", 2),
+                    ("Xaggi", 3),
+                    ("Shaurma", 4),
+                    ("Hotdog", 5),
+                    ("Combo", 6),
+                    ("Sneki", 7),
+                    ("Sous", 8),
+                    ("Napitki", 9)
                 ]
                 await conn.executemany(
-                    "INSERT INTO categories (name) VALUES ($1)",
+                    "INSERT INTO categories (name, sort_order) VALUES ($1, $2)",
                     sample_categories
                 )
             
@@ -222,24 +233,24 @@ class Database:
             foods_count = await conn.fetchval("SELECT COUNT(*) FROM foods")
             if foods_count == 0:
                 sample_foods = [
-                    (1, "Лаваш с говядиной", "Свежая лепешка с говядиной и овощами", 28000.00, 4.8, True),
-                    (1, "Лаваш с курицей", "Свежая лепешка с курицей и овощами", 26000.00, 4.7, False),
-                    (1, "Лаваш острый", "Свежая лепешка с острым мясом", 30000.00, 4.9, True),
-                    (2, "Чизбургер", "Бургер с сыром и говядиной", 32000.00, 4.6, False),
-                    (2, "Гамбургер", "Классический бургер", 25000.00, 4.5, False),
-                    (2, "Биг Бургер", "Большой бургер с двойным мясом", 45000.00, 4.9, True),
-                    (3, "Хагги классический", "Традиционный хагги", 35000.00, 4.7, False),
-                    (4, "Шаурма говяжья", "Шаурма с говядиной", 22000.00, 4.8, False),
-                    (4, "Шаурма куриная", "Шаурма с курицей", 20000.00, 4.6, False),
-                    (5, "Хот-дог классический", "Хот-дог с сосиской", 15000.00, 4.5, False),
-                    (6, "Комбо №1", "Бургер + картофель + напиток", 55000.00, 4.9, True),
-                    (7, "Картофель фри", "Хрустящий картофель", 12000.00, 4.4, False),
-                    (8, "Соус чесночный", "Чесночный соус", 3000.00, 4.8, False),
-                    (9, "Coca-Cola 0.5л", "Газированный напиток", 8000.00, 4.3, False),
+                    (1, "Лаваш с говядиной", "Свежая лепешка с говядиной и овощами", 28000.00, 4.8, True, "https://via.placeholder.com/300x200/FF6B35/fff?text=Lavash"),
+                    (1, "Лаваш с курицей", "Свежая лепешка с курицей и овощами", 26000.00, 4.7, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Lavash+Chicken"),
+                    (1, "Лаваш острый", "Свежая лепешка с острым мясом", 30000.00, 4.9, True, "https://via.placeholder.com/300x200/FF6B35/fff?text=Spicy+Lavash"),
+                    (2, "Чизбургер", "Бургер с сыром и говядиной", 32000.00, 4.6, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Cheeseburger"),
+                    (2, "Гамбургер", "Классический бургер", 25000.00, 4.5, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Hamburger"),
+                    (2, "Биг Бургер", "Большой бургер с двойным мясом", 45000.00, 4.9, True, "https://via.placeholder.com/300x200/FF6B35/fff?text=Big+Burger"),
+                    (3, "Хагги классический", "Традиционный хагги", 35000.00, 4.7, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Haggi"),
+                    (4, "Шаурма говяжья", "Шаурма с говядиной", 22000.00, 4.8, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Shaurma+Beef"),
+                    (4, "Шаурма куриная", "Шаурма с курицей", 20000.00, 4.6, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Shaurma+Chicken"),
+                    (5, "Хот-дог классический", "Хот-дог с сосиской", 15000.00, 4.5, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Hotdog"),
+                    (6, "Комбо №1", "Бургер + картофель + напиток", 55000.00, 4.9, True, "https://via.placeholder.com/300x200/FF6B35/fff?text=Combo+1"),
+                    (7, "Картофель фри", "Хрустящий картофель", 12000.00, 4.4, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Fries"),
+                    (8, "Соус чесночный", "Чесночный соус", 3000.00, 4.8, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Garlic+Sauce"),
+                    (9, "Coca-Cola 0.5л", "Газированный напиток", 8000.00, 4.3, False, "https://via.placeholder.com/300x200/FF6B35/fff?text=Coca-Cola"),
                 ]
                 await conn.executemany(
-                    """INSERT INTO foods (category_id, name, description, price, rating, is_new) 
-                    VALUES ($1, $2, $3, $4, $5, $6)""",
+                    """INSERT INTO foods (category_id, name, description, price, rating, is_new, image_url) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)""",
                     sample_foods
                 )
     
@@ -264,7 +275,7 @@ class Database:
     async def get_categories(self):
         async with self.pool.acquire() as conn:
             return await conn.fetch(
-                "SELECT * FROM categories WHERE is_active = TRUE ORDER BY name"
+                "SELECT * FROM categories WHERE is_active = TRUE ORDER BY sort_order, name"
             )
     
     async def get_foods(self, category_id: Optional[int] = None):
@@ -276,7 +287,7 @@ class Database:
                     LEFT JOIN categories c ON f.category_id = c.id
                     WHERE f.is_active = TRUE 
                     AND (f.category_id = $1 OR $1 IS NULL)
-                    ORDER BY f.name
+                    ORDER BY f.created_at DESC, f.name
                 ''', category_id)
             else:
                 return await conn.fetch('''
@@ -284,7 +295,7 @@ class Database:
                     FROM foods f
                     LEFT JOIN categories c ON f.category_id = c.id
                     WHERE f.is_active = TRUE 
-                    ORDER BY f.name
+                    ORDER BY f.created_at DESC, f.name
                 ''')
     
     async def get_food_by_id(self, food_id: int):
@@ -482,7 +493,7 @@ class Database:
             }
 
 # ============================
-# Services
+# Сервисы
 # ============================
 
 class OrderService:
@@ -610,7 +621,11 @@ class FastAPIApp:
     def __init__(self, db: Database, bot: Bot):
         self.db = db
         self.bot = bot
-        self.app = FastAPI(title="Telegram Food Delivery API", docs_url="/api/docs", redoc_url="/api/redoc")
+        self.app = FastAPI(
+            title="Telegram Food Delivery API", 
+            docs_url="/api/docs", 
+            redoc_url="/api/redoc"
+        )
         self.setup_middleware()
         self.setup_routes()
     
@@ -626,6 +641,9 @@ class FastAPIApp:
     def verify_telegram_init_data(self, init_data: str) -> bool:
         """Verify Telegram WebApp initData"""
         try:
+            if not init_data:
+                return False
+                
             # Parse initData
             data_pairs = init_data.split('&')
             data_dict = {}
@@ -670,76 +688,101 @@ class FastAPIApp:
     def setup_routes(self):
         @self.app.get("/")
         async def root():
-            return {"status": "ok", "service": "Telegram Food Delivery API"}
+            return {"status": "ok", "service": "Telegram Food Delivery API", "timestamp": datetime.now().isoformat()}
         
         @self.app.get("/api/health")
         async def health_check():
-            return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+            try:
+                # Check database connection
+                async with self.db.pool.acquire() as conn:
+                    await conn.fetchval("SELECT 1")
+                return {"status": "healthy", "database": "connected", "timestamp": datetime.now().isoformat()}
+            except Exception as e:
+                return {"status": "unhealthy", "error": str(e), "timestamp": datetime.now().isoformat()}
         
         @self.app.get("/api/foods")
-        async def get_foods(initData: str):
-            if not self.verify_telegram_init_data(initData):
-                raise HTTPException(status_code=401, detail="Invalid initData")
+        async def get_foods(request: Request):
+            # For testing, allow access without initData
+            init_data = request.query_params.get("initData")
             
-            foods = await self.db.get_foods()
-            return JSONResponse(content=[
-                {
-                    "id": f["id"],
-                    "name": f["name"],
-                    "description": f["description"],
-                    "price": float(f["price"]),
-                    "rating": float(f["rating"]),
-                    "is_new": f["is_new"],
-                    "category_id": f["category_id"],
-                    "category_name": f.get("category_name", ""),
-                    "image_url": f["image_url"]
-                }
-                for f in foods
-            ])
+            # If initData provided, verify it
+            if init_data:
+                if not self.verify_telegram_init_data(init_data):
+                    raise HTTPException(status_code=401, detail="Invalid initData")
+            
+            try:
+                foods = await self.db.get_foods()
+                return JSONResponse(content=[
+                    {
+                        "id": f["id"],
+                        "name": f["name"],
+                        "description": f["description"],
+                        "price": float(f["price"]),
+                        "rating": float(f["rating"]),
+                        "is_new": f["is_new"],
+                        "category_id": f["category_id"],
+                        "category_name": f.get("category_name", ""),
+                        "image_url": f["image_url"]
+                    }
+                    for f in foods
+                ])
+            except Exception as e:
+                logging.error(f"Error fetching foods: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         
         @self.app.get("/api/categories")
-        async def get_categories(initData: str):
-            if not self.verify_telegram_init_data(initData):
-                raise HTTPException(status_code=401, detail="Invalid initData")
+        async def get_categories(request: Request):
+            # For testing, allow access without initData
+            init_data = request.query_params.get("initData")
             
-            categories = await self.db.get_categories()
-            return JSONResponse(content=[
-                {
-                    "id": c["id"],
-                    "name": c["name"]
-                }
-                for c in categories
-            ])
+            # If initData provided, verify it
+            if init_data:
+                if not self.verify_telegram_init_data(init_data):
+                    raise HTTPException(status_code=401, detail="Invalid initData")
+            
+            try:
+                categories = await self.db.get_categories()
+                return JSONResponse(content=[
+                    {
+                        "id": c["id"],
+                        "name": c["name"]
+                    }
+                    for c in categories
+                ])
+            except Exception as e:
+                logging.error(f"Error fetching categories: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         
         @self.app.get("/api/promo/validate")
-        async def validate_promo(code: str, initData: str):
-            if not self.verify_telegram_init_data(initData):
-                raise HTTPException(status_code=401, detail="Invalid initData")
+        async def validate_promo(code: str, request: Request):
+            init_data = request.query_params.get("initData")
             
-            promo = await self.db.validate_promo(code)
-            if promo:
-                return JSONResponse(content={
-                    "valid": True,
-                    "discount_percent": promo["discount_percent"],
-                    "code": promo["code"],
-                    "id": promo["id"]
-                })
-            return JSONResponse(content={"valid": False})
+            # If initData provided, verify it
+            if init_data:
+                if not self.verify_telegram_init_data(init_data):
+                    raise HTTPException(status_code=401, detail="Invalid initData")
+            
+            try:
+                promo = await self.db.validate_promo(code)
+                if promo:
+                    return JSONResponse(content={
+                        "valid": True,
+                        "discount_percent": promo["discount_percent"],
+                        "code": promo["code"],
+                        "id": promo["id"]
+                    })
+                return JSONResponse(content={"valid": False})
+            except Exception as e:
+                logging.error(f"Error validating promo: {e}")
+                return JSONResponse(content={"valid": False})
         
-        @self.app.get("/webapp")
-        async def webapp_index():
-            # Return your Netlify hosted webapp URL
-            return HTMLResponse(content=f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta http-equiv="refresh" content="0; url={config.WEBAPP_URL}">
-            </head>
-            <body>
-                <p>Redirecting to <a href="{config.WEBAPP_URL}">Food Delivery WebApp</a>...</p>
-            </body>
-            </html>
-            """)
+        @self.app.get("/api/test")
+        async def test_endpoint():
+            return JSONResponse(content={
+                "message": "API is working",
+                "backend_url": "https://uzbke-production.up.railway.app",
+                "timestamp": datetime.now().isoformat()
+            })
 
 # ============================
 # Telegram Bot Handlers
@@ -1112,7 +1155,7 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
         await callback.answer()
 
 # ============================
-# Main Application
+# Главное приложение
 # ============================
 
 async def main():
@@ -1128,7 +1171,7 @@ async def main():
     logger = logging.getLogger(__name__)
     
     try:
-        logger.info("Starting Telegram Food Delivery Bot...")
+        logger.info("🚀 Starting Telegram Food Delivery Bot...")
         
         # Initialize bot
         bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -1141,15 +1184,14 @@ async def main():
         dp = Dispatcher(storage=storage)
         
         # Initialize database
-        logger.info("Connecting to database...")
+        logger.info("🔗 Connecting to database...")
         db = Database(config.DB_URL)
         await db.connect()
-        logger.info("Database connected successfully")
         
         # Get bot username
         bot_info = await bot.get_me()
         config.BOT_USERNAME = bot_info.username
-        logger.info(f"Bot @{config.BOT_USERNAME} is starting...")
+        logger.info(f"🤖 Bot @{config.BOT_USERNAME} is starting...")
         
         # Register handlers
         @dp.message(CommandStart())
@@ -1192,22 +1234,23 @@ async def main():
                 host="0.0.0.0",
                 port=config.PORT,
                 log_level="info",
-                access_log=True
+                access_log=False
             )
         
         fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
         fastapi_thread.start()
-        logger.info(f"FastAPI server started on port {config.PORT}")
+        logger.info(f"🌐 FastAPI server started on port {config.PORT}")
         
         # Delete webhook and start polling
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted, starting polling...")
+        logger.info("🔄 Webhook deleted, starting polling...")
         
         # Start bot
+        logger.info("✅ Bot is ready and running!")
         await dp.start_polling(bot)
         
     except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
+        logger.error(f"❌ Failed to start bot: {e}")
         raise
 
 if __name__ == "__main__":
