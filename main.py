@@ -44,14 +44,14 @@ import hmac
 
 @dataclass
 class Config:
-    BOT_TOKEN = "7917271389:AAE4PXCowGo6Bsfdy3Hrz3x689MLJdQmVi4"
-    ADMIN_IDS = 6365371142
-    DB_URL = "postgresql+asyncpg://postgres:BDAaILJKOITNLlMOjJNfWiRPbICwEcpZ@centerbeam.proxy.rlwy.net:35489/railway"
-    REDIS_URL = "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRtRRJp@ballast.proxy.rlwy.net:35411"
-    SHOP_CHANNEL_ID = "-1003530497437"
-    COURIER_CHANNEL_ID "-1003707946746"
-    WEBAPP_URL "https://mainsufooduz.netlify.app"
-    PORT= ("PORT", 8000)
+    BOT_TOKEN: str = "7917271389:AAE4PXCowGo6Bsfdy3Hrz3x689MLJdQmVi4"
+    ADMIN_IDS: List[int] = [6365371142]
+    DB_URL: str = "postgresql+asyncpg://postgres:BDAaILJKOITNLlMOjJNfWiRPbICwEcpZ@centerbeam.proxy.rlwy.net:35489/railway"
+    REDIS_URL: str = "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRtRRJp@ballast.proxy.rlwy.net:35411"
+    SHOP_CHANNEL_ID: str = "-1003530497437"
+    COURIER_CHANNEL_ID: str = "-1003707946746"
+    WEBAPP_URL: str = "https://mainsufooduz.netlify.app"
+    PORT: int = int(os.getenv("PORT", 8000))
     
     def __post_init__(self):
         # Convert Redis URL for asyncpg compatibility
