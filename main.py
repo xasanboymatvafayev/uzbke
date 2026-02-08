@@ -11,7 +11,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 import asyncpg
@@ -34,7 +34,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from contextlib import asynccontextmanager
 import hashlib
 import hmac
 
@@ -45,7 +44,7 @@ import hmac
 @dataclass
 class Config:
     BOT_TOKEN: str = "7917271389:AAE4PXCowGo6Bsfdy3Hrz3x689MLJdQmVi4"
-    ADMIN_IDS: List[int] = [6365371142]
+    ADMIN_IDS: List[int] = field(default_factory=lambda: [6365371142])
     DB_URL: str = "postgresql+asyncpg://postgres:BDAaILJKOITNLlMOjJNfWiRPbICwEcpZ@centerbeam.proxy.rlwy.net:35489/railway"
     REDIS_URL: str = "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRtRRJp@ballast.proxy.rlwy.net:35411"
     SHOP_CHANNEL_ID: str = "-1003530497437"
