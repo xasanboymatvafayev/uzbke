@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Telegram Food Delivery System - Complete Backend
-Production-ready system with all requirements
+Telegram Food Delivery System - Complete Backend for Railway
+Production-ready system with your credentials
 """
 
 import asyncio
@@ -10,57 +10,55 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta
-from decimal import Decimal
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
-from dotenv import load_dotenv
-from typing import List, Optional
+
 import asyncpg
 from aiogram import Bot, Dispatcher, F, Router, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode, ChatType
-from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    WebAppInfo, ReplyKeyboardMarkup, KeyboardButton, KeyboardButtonRequestUser,
-    ReplyKeyboardRemove, WebAppData, Location
+    WebAppInfo, ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardRemove, WebAppData
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from aiogram.utils.deep_linking import create_start_link
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import redis.asyncio as redis
-from contextlib import asynccontextmanager
-import hashlib
-import hmac
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from contextlib import asynccontextmanager
+import hashlib
+import hmac
 
 # ============================
-# Configuration
+# Configuration - Your Credentials
 # ============================
 
 @dataclass
 class Config:
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-    ADMIN_IDS: List[int] = field(default_factory=lambda: [
-        int(x.strip()) for x in os.getenv("ADMIN_IDS", "123456789").split(",") if x.strip()
-    ])
-    DB_URL: str = os.getenv("DB_URL", "postgresql://postgres:password@localhost:5432/food_delivery")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    SHOP_CHANNEL_ID: str = os.getenv("SHOP_CHANNEL_ID", "-1001234567890")
-    COURIER_CHANNEL_ID: str = os.getenv("COURIER_CHANNEL_ID", "-1001234567891")
-    WEBAPP_URL: str = os.getenv("WEBAPP_URL", "https://yourdomain.com/webapp")
-    BOT_USERNAME: str = ""
+    BOT_TOKEN: str = "7917271389:AAE4PXCowGo6Bsfdy3Hrz3x689MLJdQmVi4"
+    ADMIN_IDS: List[int] = [6365371142]
+    DB_URL: str = "postgresql+asyncpg://postgres:BDAaILJKOITNLlMOjJNfWiRPbICwEcpZ@centerbeam.proxy.rlwy.net:35489/railway"
+    REDIS_URL: str = "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRtRRJp@ballast.proxy.rlwy.net:35411"
+    SHOP_CHANNEL_ID: str = "-1003530497437"
+    COURIER_CHANNEL_ID: str = "-1003707946746"
+    WEBAPP_URL: str = "https://mainsufooduz.netlify.app"
+    PORT: int = int(os.getenv("PORT", 8000))
     
     def __post_init__(self):
-        if not self.BOT_TOKEN:
-            raise ValueError("BOT_TOKEN is required")
+        # Convert Redis URL for asyncpg compatibility
+        self.DB_URL = self.DB_URL.replace("postgresql+asyncpg://", "postgresql://")
+        self.BOT_USERNAME: str = ""
+
+config = Config()
 
 # ============================
 # Database Models
@@ -75,7 +73,6 @@ class OrderStatus(str, Enum):
     DELIVERED = "DELIVERED"
     CANCELED = "CANCELED"
 
-# Pydantic models for WebApp
 class WebAppOrderItem(BaseModel):
     food_id: int
     name: str
@@ -102,7 +99,7 @@ class Database:
         self.pool = None
     
     async def connect(self):
-        self.pool = await asyncpg.create_pool(self.connection_string)
+        self.pool = await asyncpg.create_pool(self.connection_string, min_size=1, max_size=10)
         await self.init_db()
     
     async def init_db(self):
@@ -204,8 +201,8 @@ class Database:
             ''')
             
             # Insert sample categories if empty
-            categories = await conn.fetch("SELECT COUNT(*) FROM categories")
-            if categories[0]['count'] == 0:
+            categories_count = await conn.fetchval("SELECT COUNT(*) FROM categories")
+            if categories_count == 0:
                 sample_categories = [
                     ("Lavash",),
                     ("Burger",),
@@ -223,8 +220,8 @@ class Database:
                 )
             
             # Insert sample foods if empty
-            foods = await conn.fetch("SELECT COUNT(*) FROM foods")
-            if foods[0]['count'] == 0:
+            foods_count = await conn.fetchval("SELECT COUNT(*) FROM foods")
+            if foods_count == 0:
                 sample_foods = [
                     (1, "Лаваш с говядиной", "Свежая лепешка с говядиной и овощами", 28000.00, 4.8, True),
                     (1, "Лаваш с курицей", "Свежая лепешка с курицей и овощами", 26000.00, 4.7, False),
@@ -247,7 +244,7 @@ class Database:
                     sample_foods
                 )
     
-    async def get_user(self, tg_id: int) -> Optional[dict]:
+    async def get_user(self, tg_id: int):
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 "SELECT * FROM users WHERE tg_id = $1",
@@ -275,23 +272,35 @@ class Database:
         async with self.pool.acquire() as conn:
             if category_id:
                 return await conn.fetch('''
-                    SELECT * FROM foods 
-                    WHERE is_active = TRUE 
-                    AND (category_id = $1 OR $1 IS NULL)
-                    ORDER BY name
+                    SELECT f.*, c.name as category_name 
+                    FROM foods f
+                    LEFT JOIN categories c ON f.category_id = c.id
+                    WHERE f.is_active = TRUE 
+                    AND (f.category_id = $1 OR $1 IS NULL)
+                    ORDER BY f.name
                 ''', category_id)
             else:
                 return await conn.fetch('''
-                    SELECT * FROM foods 
-                    WHERE is_active = TRUE 
-                    ORDER BY name
+                    SELECT f.*, c.name as category_name 
+                    FROM foods f
+                    LEFT JOIN categories c ON f.category_id = c.id
+                    WHERE f.is_active = TRUE 
+                    ORDER BY f.name
                 ''')
+    
+    async def get_food_by_id(self, food_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow('''
+                SELECT * FROM foods WHERE id = $1 AND is_active = TRUE
+            ''', food_id)
     
     async def create_order(self, data: WebAppOrderData, user_id: int, promo_id: Optional[int] = None):
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 # Generate order number
-                order_number = f"ORD-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+                date_str = datetime.now().strftime('%Y%m%d')
+                unique_id = uuid.uuid4().hex[:6].upper()
+                order_number = f"ORD-{date_str}-{unique_id}"
                 
                 # Create order
                 order = await conn.fetchrow('''
@@ -323,12 +332,31 @@ class Database:
                 LIMIT $2
             ''', user_id, limit)
     
+    async def get_order_by_id(self, order_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow('''
+                SELECT o.*, u.tg_id as user_tg_id, u.username, u.full_name as user_full_name,
+                       c.name as courier_name
+                FROM orders o
+                LEFT JOIN users u ON o.user_id = u.id
+                LEFT JOIN couriers c ON o.courier_id = c.id
+                WHERE o.id = $1
+            ''', order_id)
+    
+    async def get_order_items(self, order_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch('''
+                SELECT * FROM order_items WHERE order_id = $1
+            ''', order_id)
+    
     async def get_active_orders(self):
         async with self.pool.acquire() as conn:
             return await conn.fetch('''
-                SELECT * FROM orders 
-                WHERE status NOT IN ('DELIVERED', 'CANCELED')
-                ORDER BY created_at DESC
+                SELECT o.*, u.username, u.full_name as user_full_name 
+                FROM orders o
+                LEFT JOIN users u ON o.user_id = u.id
+                WHERE o.status NOT IN ('DELIVERED', 'CANCELED')
+                ORDER BY o.created_at DESC
             ''')
     
     async def update_order_status(self, order_id: int, status: OrderStatus, courier_id: Optional[int] = None):
@@ -366,6 +394,12 @@ class Database:
                     "SELECT * FROM couriers WHERE is_active = TRUE ORDER BY name"
                 )
             return await conn.fetch("SELECT * FROM couriers ORDER BY name")
+    
+    async def get_courier_by_id(self, courier_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow('''
+                SELECT * FROM couriers WHERE id = $1
+            ''', courier_id)
     
     async def create_courier(self, chat_id: int, name: str):
         async with self.pool.acquire() as conn:
@@ -422,6 +456,31 @@ class Database:
                 SET used_count = used_count + 1 
                 WHERE id = $1
             ''', promo_id)
+    
+    async def get_stats(self, period_days: int = 30):
+        async with self.pool.acquire() as conn:
+            since_date = datetime.now() - timedelta(days=period_days)
+            
+            orders_count = await conn.fetchval('''
+                SELECT COUNT(*) FROM orders 
+                WHERE created_at >= $1
+            ''', since_date)
+            
+            delivered_count = await conn.fetchval('''
+                SELECT COUNT(*) FROM orders 
+                WHERE status = 'DELIVERED' AND delivered_at >= $1
+            ''', since_date)
+            
+            revenue = await conn.fetchval('''
+                SELECT COALESCE(SUM(total), 0) FROM orders 
+                WHERE status = 'DELIVERED' AND delivered_at >= $1
+            ''', since_date)
+            
+            return {
+                'orders_count': orders_count or 0,
+                'delivered_count': delivered_count or 0,
+                'revenue': revenue or 0
+            }
 
 # ============================
 # Services
@@ -445,7 +504,7 @@ class OrderService:
         
         # Format order items text
         items_text = "\n".join([
-            f"• {item.name} x{item.qty} = {item.price * item.qty:,} сум"
+            f"• {item.name} x{item.qty} = {item.price * item.qty:,.0f} сум"
             for item in data.items
         ])
         
@@ -455,7 +514,7 @@ class OrderService:
             text=f"""✅ Ваш заказ принят!
 
 🆔 Заказ №{order['order_number']}
-💰 Сумма: {data.total:,} сум
+💰 Сумма: {data.total:,.0f} сум
 📦 Статус: Принят
 
 Ожидайте подтверждения от администратора.""",
@@ -463,22 +522,24 @@ class OrderService:
         )
         
         # Send to admin channel
-        location_text = f"{data.location['lat']},{data.location['lng']}"
+        location_text = f"{data.location['lat']:.6f},{data.location['lng']:.6f}"
         location_url = f"https://maps.google.com/?q={data.location['lat']},{data.location['lng']}"
         
-        admin_message = await self.bot.send_message(
-            chat_id=config.SHOP_CHANNEL_ID,
-            text=f"""🆕 Новый заказ №{order['order_number']}
+        admin_message_text = f"""🆕 Новый заказ №{order['order_number']}
 👤 Пользователь: {user['full_name']} (@{user['username'] or 'нет'})
 📞 Телефон: {data.phone}
-💰 Сумма: {data.total:,} сум
+💰 Сумма: {data.total:,.0f} сум
 🕒 Время: {datetime.now().strftime('%H:%M %d.%m.%Y')}
 📍 Локация: <a href="{location_url}">{location_text}</a>
 
 🍽️ Заказ:
 {items_text}
 
-📝 Комментарий: {data.comment or 'нет'}""",
+📝 Комментарий: {data.comment or 'нет'}"""
+        
+        admin_message = await self.bot.send_message(
+            chat_id=config.SHOP_CHANNEL_ID,
+            text=admin_message_text,
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
@@ -500,13 +561,7 @@ class OrderService:
         await self.db.update_order_status(order_id, status, courier_id)
         
         # Get order details
-        async with self.db.pool.acquire() as conn:
-            order = await conn.fetchrow('''
-                SELECT o.*, u.tg_id as user_tg_id 
-                FROM orders o 
-                JOIN users u ON o.user_id = u.id 
-                WHERE o.id = $1
-            ''', order_id)
+        order = await self.db.get_order_by_id(order_id)
         
         status_texts = {
             OrderStatus.CONFIRMED: "✅ Подтвержден",
@@ -518,7 +573,7 @@ class OrderService:
         }
         
         # Notify user
-        if order['user_tg_id']:
+        if order and order['user_tg_id']:
             await self.bot.send_message(
                 chat_id=order['user_tg_id'],
                 text=f"📦 Заказ №{order['order_number']}\n"
@@ -528,14 +583,14 @@ class OrderService:
         # If courier assigned, notify courier
         if status == OrderStatus.COURIER_ASSIGNED and courier_id:
             courier = await self.db.get_courier_by_id(courier_id)
-            if courier:
+            if courier and order:
                 location_url = f"https://maps.google.com/?q={order['location_lat']},{order['location_lng']}"
                 await self.bot.send_message(
                     chat_id=courier['chat_id'],
                     text=f"""🚴 Новый заказ №{order['order_number']}
 👤 Клиент: {order['customer_name']}
 📞 Телефон: {order['phone']}
-💰 Сумма: {order['total']:,} сум
+💰 Сумма: {order['total']:,.0f} сум
 📍 Локация: <a href="{location_url}">На карте</a>
 
 📝 Комментарий: {order['comment'] or 'нет'}""",
@@ -548,27 +603,15 @@ class OrderService:
                     ])
                 )
 
-class CourierService:
-    def __init__(self, db: Database, bot: Bot):
-        self.db = db
-        self.bot = bot
-    
-    async def assign_courier(self, order_id: int, courier_id: int):
-        order_service = OrderService(self.db, self.bot)
-        await order_service.update_order_status(order_id, OrderStatus.COURIER_ASSIGNED, courier_id)
-
 # ============================
 # FastAPI WebApp Backend
 # ============================
-
-class TelegramInitData(BaseModel):
-    initData: str
 
 class FastAPIApp:
     def __init__(self, db: Database, bot: Bot):
         self.db = db
         self.bot = bot
-        self.app = FastAPI(title="Telegram Food Delivery API")
+        self.app = FastAPI(title="Telegram Food Delivery API", docs_url="/api/docs", redoc_url="/api/redoc")
         self.setup_middleware()
         self.setup_routes()
     
@@ -581,7 +624,7 @@ class FastAPIApp:
             allow_headers=["*"],
         )
     
-    def verify_telegram_init_data(self, init_data: str, bot_token: str) -> bool:
+    def verify_telegram_init_data(self, init_data: str) -> bool:
         """Verify Telegram WebApp initData"""
         try:
             # Parse initData
@@ -590,11 +633,12 @@ class FastAPIApp:
             hash_value = None
             
             for pair in data_pairs:
-                key, value = pair.split('=')
-                if key == 'hash':
-                    hash_value = value
-                else:
-                    data_dict[key] = value
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
+                    if key == 'hash':
+                        hash_value = value
+                    else:
+                        data_dict[key] = value
             
             if not hash_value:
                 return False
@@ -608,7 +652,7 @@ class FastAPIApp:
             # Calculate secret key
             secret_key = hmac.new(
                 key=b"WebAppData",
-                msg=bot_token.encode(),
+                msg=config.BOT_TOKEN.encode(),
                 digestmod=hashlib.sha256
             ).digest()
             
@@ -620,22 +664,22 @@ class FastAPIApp:
             ).hexdigest()
             
             return calculated_hash == hash_value
-        except:
+        except Exception as e:
+            logging.error(f"Error verifying init data: {e}")
             return False
     
-    def parse_init_data(self, init_data: str) -> Dict[str, str]:
-        """Parse Telegram initData to dict"""
-        result = {}
-        for pair in init_data.split('&'):
-            if '=' in pair:
-                key, value = pair.split('=', 1)
-                result[key] = value
-        return result
-    
     def setup_routes(self):
+        @self.app.get("/")
+        async def root():
+            return {"status": "ok", "service": "Telegram Food Delivery API"}
+        
+        @self.app.get("/api/health")
+        async def health_check():
+            return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+        
         @self.app.get("/api/foods")
-        async def get_foods(init_data: str):
-            if not self.verify_telegram_init_data(init_data, config.BOT_TOKEN):
+        async def get_foods(initData: str):
+            if not self.verify_telegram_init_data(initData):
                 raise HTTPException(status_code=401, detail="Invalid initData")
             
             foods = await self.db.get_foods()
@@ -648,14 +692,15 @@ class FastAPIApp:
                     "rating": float(f["rating"]),
                     "is_new": f["is_new"],
                     "category_id": f["category_id"],
+                    "category_name": f.get("category_name", ""),
                     "image_url": f["image_url"]
                 }
                 for f in foods
             ])
         
         @self.app.get("/api/categories")
-        async def get_categories(init_data: str):
-            if not self.verify_telegram_init_data(init_data, config.BOT_TOKEN):
+        async def get_categories(initData: str):
+            if not self.verify_telegram_init_data(initData):
                 raise HTTPException(status_code=401, detail="Invalid initData")
             
             categories = await self.db.get_categories()
@@ -668,8 +713,8 @@ class FastAPIApp:
             ])
         
         @self.app.get("/api/promo/validate")
-        async def validate_promo(code: str, init_data: str):
-            if not self.verify_telegram_init_data(init_data, config.BOT_TOKEN):
+        async def validate_promo(code: str, initData: str):
+            if not self.verify_telegram_init_data(initData):
                 raise HTTPException(status_code=401, detail="Invalid initData")
             
             promo = await self.db.validate_promo(code)
@@ -677,22 +722,29 @@ class FastAPIApp:
                 return JSONResponse(content={
                     "valid": True,
                     "discount_percent": promo["discount_percent"],
-                    "code": promo["code"]
+                    "code": promo["code"],
+                    "id": promo["id"]
                 })
             return JSONResponse(content={"valid": False})
         
         @self.app.get("/webapp")
         async def webapp_index():
-            with open("webapp_index.html", "r", encoding="utf-8") as f:
-                html_content = f.read()
-            return HTMLResponse(content=html_content)
+            # Return your Netlify hosted webapp URL
+            return HTMLResponse(content=f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta http-equiv="refresh" content="0; url={config.WEBAPP_URL}">
+            </head>
+            <body>
+                <p>Redirecting to <a href="{config.WEBAPP_URL}">Food Delivery WebApp</a>...</p>
+            </body>
+            </html>
+            """)
 
 # ============================
 # Telegram Bot Handlers
 # ============================
-
-class ClientStates(StatesGroup):
-    waiting_for_order_comment = State()
 
 async def start_handler(message: Message, db: Database, bot: Bot):
     args = message.text.split()
@@ -742,38 +794,33 @@ async def my_orders_handler(message: Message, db: Database):
     orders = await db.get_user_orders(user['id'])
     
     if not orders:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=config.WEBAPP_URL))]
+        ])
         await message.answer(
             "В данный момент у вас нет активных заказов в нашем магазине.\n"
-            "Чтобы открыть магазин, введите команду — /shop"
+            "Чтобы открыть магазин, нажмите кнопку ниже",
+            reply_markup=keyboard
         )
         return
     
     text = "📦 Ваши заказы:\n\n"
-    for order in orders[:10]:  # Show last 10 orders
+    for order in orders[:10]:
         created_at = order['created_at'].strftime('%d.%m.%Y %H:%M')
         status_text = {
-            'NEW': 'Принят',
-            'CONFIRMED': 'Подтвержден',
-            'COOKING': 'Готовится',
-            'COURIER_ASSIGNED': 'Курьер назначен',
-            'OUT_FOR_DELIVERY': 'Передан курьеру',
-            'DELIVERED': 'Доставлен',
-            'CANCELED': 'Отменен'
+            'NEW': '🆕 Принят',
+            'CONFIRMED': '✅ Подтвержден',
+            'COOKING': '🍳 Готовится',
+            'COURIER_ASSIGNED': '🚴 Курьер назначен',
+            'OUT_FOR_DELIVERY': '📦 Передан курьеру',
+            'DELIVERED': '🎉 Доставлен',
+            'CANCELED': '❌ Отменен'
         }.get(order['status'], order['status'])
         
-        text += f"🆔 Заказ №{order['order_number']} | {created_at} | 💰 {order['total']:,} | 📦 {status_text}\n"
+        text += f"{status_text} №{order['order_number']}\n"
+        text += f"📅 {created_at} | 💰 {order['total']:,.0f} сум\n\n"
     
     await message.answer(text)
-
-async def shop_handler(message: Message):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=config.WEBAPP_URL))]
-    ])
-    
-    await message.answer(
-        "Чтобы открыть наш магазин, нажмите кнопку ниже",
-        reply_markup=keyboard
-    )
 
 async def info_handler(message: Message):
     info_text = """🌟 Добро Пожаловать в FIESTA !
@@ -809,7 +856,6 @@ async def referral_handler(message: Message, db: Database, bot: Bot):
     
     # Check if user qualifies for promo
     if stats['ref_count'] >= 3:
-        # Check if user already has a promo
         async with db.pool.acquire() as conn:
             existing_promo = await conn.fetchrow(
                 "SELECT * FROM promos WHERE code LIKE $1",
@@ -851,10 +897,6 @@ async def web_app_data_handler(message: WebAppData, db: Database, bot: Bot):
         logging.error(f"Error processing web app data: {e}")
         await message.answer("❌ Ошибка при обработке заказа. Попробуйте снова.")
 
-# ============================
-# Admin Handlers
-# ============================
-
 async def admin_handler(message: Message):
     if message.from_user.id not in config.ADMIN_IDS:
         await message.answer("Доступ запрещен")
@@ -884,6 +926,8 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
         order_service = OrderService(db, bot)
         await order_service.update_order_status(order_id, OrderStatus.CONFIRMED)
         await callback.answer("Заказ подтвержден")
+        
+        # Update message buttons
         await callback.message.edit_reply_markup(
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
@@ -901,11 +945,26 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
         order_service = OrderService(db, bot)
         await order_service.update_order_status(order_id, OrderStatus.COOKING)
         await callback.answer("Заказ готовится")
+        
         await callback.message.edit_reply_markup(
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(text="🍳 ГОТОВИТСЯ", callback_data="noop"),
                     InlineKeyboardButton(text="🚴 Курьер", callback_data=f"assign_courier:{order_id}")
+                ]
+            ])
+        )
+    
+    elif data.startswith("cancel:"):
+        order_id = int(data.split(":")[1])
+        order_service = OrderService(db, bot)
+        await order_service.update_order_status(order_id, OrderStatus.CANCELED)
+        await callback.answer("Заказ отменен")
+        
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="❌ ОТМЕНЕН", callback_data="noop")
                 ]
             ])
         )
@@ -937,9 +996,10 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
         order_id = int(order_id)
         courier_id = int(courier_id)
         
-        courier_service = CourierService(db, bot)
-        await courier_service.assign_courier(order_id, courier_id)
+        order_service = OrderService(db, bot)
+        await order_service.update_order_status(order_id, OrderStatus.COURIER_ASSIGNED, courier_id)
         await callback.answer("Курьер назначен")
+        
         await callback.message.edit_reply_markup(
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
@@ -949,11 +1009,26 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
             ])
         )
     
+    elif data.startswith("out_for_delivery:"):
+        order_id = int(data.split(":")[1])
+        order_service = OrderService(db, bot)
+        await order_service.update_order_status(order_id, OrderStatus.OUT_FOR_DELIVERY)
+        await callback.answer("Заказ передан курьеру")
+        
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="📦 ПЕРЕДАН КУРЬЕРУ", callback_data="noop")
+                ]
+            ])
+        )
+    
     elif data.startswith("courier_accept:"):
         order_id = int(data.split(":")[1])
         order_service = OrderService(db, bot)
         await order_service.update_order_status(order_id, OrderStatus.OUT_FOR_DELIVERY)
         await callback.answer("Заказ принят")
+        
         await callback.message.edit_text(
             callback.message.text + "\n\n✅ Курьер принял заказ",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -966,6 +1041,7 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
         order_service = OrderService(db, bot)
         await order_service.update_order_status(order_id, OrderStatus.DELIVERED)
         await callback.answer("Заказ доставлен")
+        
         await callback.message.edit_text(
             callback.message.text + "\n\n🎉 Заказ доставлен!",
             reply_markup=None
@@ -978,7 +1054,7 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
             await callback.message.answer("Нет активных заказов")
         else:
             text = "📦 Активные заказы:\n\n"
-            for order in orders[:20]:  # Limit to 20 orders
+            for order in orders[:20]:
                 created_at = order['created_at'].strftime('%H:%M %d.%m')
                 status_text = {
                     'NEW': '🆕 Принят',
@@ -988,75 +1064,50 @@ async def admin_callback_handler(callback: CallbackQuery, db: Database, bot: Bot
                     'OUT_FOR_DELIVERY': '📦 В пути'
                 }.get(order['status'], order['status'])
                 
-                text += f"{status_text} №{order['order_number']} | {created_at} | {order['total']:,}\n"
-                text += f"👤 {order['customer_name']} | 📞 {order['phone']}\n\n"
+                text += f"{status_text} №{order['order_number']}\n"
+                text += f"👤 {order['customer_name']} | 📞 {order['phone']}\n"
+                text += f"📅 {created_at} | 💰 {order['total']:,.0f} сум\n\n"
             
             await callback.message.answer(text)
         await callback.answer()
     
     elif data == "admin_stats":
-        async with db.pool.acquire() as conn:
-            # Today's stats
-            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            
-            today_orders = await conn.fetchval('''
-                SELECT COUNT(*) FROM orders 
-                WHERE created_at >= $1
-            ''', today_start)
-            
-            today_delivered = await conn.fetchval('''
-                SELECT COUNT(*) FROM orders 
-                WHERE status = 'DELIVERED' AND delivered_at >= $1
-            ''', today_start)
-            
-            today_revenue = await conn.fetchval('''
-                SELECT COALESCE(SUM(total), 0) FROM orders 
-                WHERE status = 'DELIVERED' AND delivered_at >= $1
-            ''', today_start)
-            
-            # Weekly stats
-            week_start = today_start - timedelta(days=7)
-            week_revenue = await conn.fetchval('''
-                SELECT COALESCE(SUM(total), 0) FROM orders 
-                WHERE status = 'DELIVERED' AND delivered_at >= $1
-            ''', week_start)
-            
-            # Monthly stats
-            month_start = today_start.replace(day=1)
-            month_revenue = await conn.fetchval('''
-                SELECT COALESCE(SUM(total), 0) FROM orders 
-                WHERE status = 'DELIVERED' AND delivered_at >= $1
-            ''', month_start)
-            
-            # Top foods
-            top_foods = await conn.fetch('''
-                SELECT oi.name_snapshot, SUM(oi.qty) as total_qty
-                FROM order_items oi
-                JOIN orders o ON oi.order_id = o.id
-                WHERE o.status = 'DELIVERED'
-                AND o.delivered_at >= $1
-                GROUP BY oi.name_snapshot
-                ORDER BY total_qty DESC
-                LIMIT 5
-            ''', month_start)
+        # Today stats
+        today_stats = await db.get_stats(1)
+        week_stats = await db.get_stats(7)
+        month_stats = await db.get_stats(30)
         
         text = f"""📊 Статистика:
 
 📅 Сегодня:
-├ Заказы: {today_orders}
-├ Доставлено: {today_delivered}
-└ Выручка: {today_revenue:,} сум
+├ Заказы: {today_stats['orders_count']}
+├ Доставлено: {today_stats['delivered_count']}
+└ Выручка: {today_stats['revenue']:,.0f} сум
 
 📅 За неделю:
-└ Выручка: {week_revenue:,} сум
+├ Заказы: {week_stats['orders_count']}
+├ Доставлено: {week_stats['delivered_count']}
+└ Выручка: {week_stats['revenue']:,.0f} сум
 
 📅 За месяц:
-└ Выручка: {month_revenue:,} сум
-
-🏆 Популярные блюда:"""
+├ Заказы: {month_stats['orders_count']}
+├ Доставлено: {month_stats['delivered_count']}
+└ Выручка: {month_stats['revenue']:,.0f} сум"""
         
-        for i, food in enumerate(top_foods, 1):
-            text += f"\n{i}. {food['name_snapshot']}: {food['total_qty']} шт."
+        await callback.message.answer(text)
+        await callback.answer()
+    
+    elif data == "admin_couriers":
+        couriers = await db.get_couriers(active_only=False)
+        
+        if not couriers:
+            text = "Нет зарегистрированных курьеров"
+        else:
+            text = "🚴 Список курьеров:\n\n"
+            for courier in couriers:
+                status = "✅ Активен" if courier['is_active'] else "❌ Неактивен"
+                text += f"{courier['name']} - {status}\n"
+                text += f"ID: {courier['chat_id']}\n\n"
         
         await callback.message.answer(text)
         await callback.answer()
@@ -1069,73 +1120,96 @@ async def main():
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler("bot.log")
+        ]
     )
+    logger = logging.getLogger(__name__)
     
-    # Initialize bot
-    bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    
-    # Initialize Redis storage
-    redis_client = redis.from_url(config.REDIS_URL)
-    storage = RedisStorage(redis=redis_client)
-    
-    # Initialize dispatcher
-    dp = Dispatcher(storage=storage)
-    
-    # Initialize database
-    db = Database(config.DB_URL)
-    await db.connect()
-    
-    # Get bot username
-    bot_info = await bot.get_me()
-    config.BOT_USERNAME = bot_info.username
-    
-    # Register handlers
-    @dp.message(CommandStart())
-    async def cmd_start(message: Message):
-        await start_handler(message, db, bot)
-    
-    @dp.message(Command("shop"))
-    async def cmd_shop(message: Message):
-        await shop_handler(message)
-    
-    @dp.message(F.text == "📦 Мои заказы")
-    async def cmd_my_orders(message: Message):
-        await my_orders_handler(message, db)
-    
-    @dp.message(F.text == "ℹ️ Информация о нас")
-    async def cmd_info(message: Message):
-        await info_handler(message)
-    
-    @dp.message(F.text == "👥 Пригласить друга")
-    async def cmd_referral(message: Message):
-        await referral_handler(message, db, bot)
-    
-    @dp.message(Command("admin"))
-    async def cmd_admin(message: Message):
-        await admin_handler(message)
-    
-    @dp.message(F.web_app_data)
-    async def handle_web_app_data(message: WebAppData):
-        await web_app_data_handler(message, db, bot)
-    
-    @dp.callback_query()
-    async def handle_callback(callback: CallbackQuery):
-        await admin_callback_handler(callback, db, bot)
-    
-    # Initialize FastAPI
-    fastapi_app = FastAPIApp(db, bot)
-    
-    # Start FastAPI in background
-    import threading
-    def run_fastapi():
-        uvicorn.run(fastapi_app.app, host="0.0.0.0", port=8000, log_level="info")
-    
-    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
-    fastapi_thread.start()
-    
-    # Start bot
-    await dp.start_polling(bot)
+    try:
+        logger.info("Starting Telegram Food Delivery Bot...")
+        
+        # Initialize bot
+        bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        
+        # Initialize Redis storage
+        redis_client = redis.from_url(config.REDIS_URL)
+        storage = RedisStorage(redis=redis_client)
+        
+        # Initialize dispatcher
+        dp = Dispatcher(storage=storage)
+        
+        # Initialize database
+        logger.info("Connecting to database...")
+        db = Database(config.DB_URL)
+        await db.connect()
+        logger.info("Database connected successfully")
+        
+        # Get bot username
+        bot_info = await bot.get_me()
+        config.BOT_USERNAME = bot_info.username
+        logger.info(f"Bot @{config.BOT_USERNAME} is starting...")
+        
+        # Register handlers
+        @dp.message(CommandStart())
+        async def cmd_start(message: Message):
+            await start_handler(message, db, bot)
+        
+        @dp.message(F.text == "📦 Мои заказы")
+        async def cmd_my_orders(message: Message):
+            await my_orders_handler(message, db)
+        
+        @dp.message(F.text == "ℹ️ Информация о нас")
+        async def cmd_info(message: Message):
+            await info_handler(message)
+        
+        @dp.message(F.text == "👥 Пригласить друга")
+        async def cmd_referral(message: Message):
+            await referral_handler(message, db, bot)
+        
+        @dp.message(Command("admin"))
+        async def cmd_admin(message: Message):
+            await admin_handler(message)
+        
+        @dp.message(F.web_app_data)
+        async def handle_web_app_data(message: WebAppData):
+            await web_app_data_handler(message, db, bot)
+        
+        @dp.callback_query()
+        async def handle_callback(callback: CallbackQuery):
+            await admin_callback_handler(callback, db, bot)
+        
+        # Initialize FastAPI
+        fastapi_app = FastAPIApp(db, bot)
+        
+        # Start FastAPI server in background
+        import threading
+        
+        def run_fastapi():
+            uvicorn.run(
+                fastapi_app.app,
+                host="0.0.0.0",
+                port=config.PORT,
+                log_level="info",
+                access_log=True
+            )
+        
+        fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+        fastapi_thread.start()
+        logger.info(f"FastAPI server started on port {config.PORT}")
+        
+        # Delete webhook and start polling
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted, starting polling...")
+        
+        # Start bot
+        await dp.start_polling(bot)
+        
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())
