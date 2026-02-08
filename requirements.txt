@@ -1,8 +1,9 @@
-aiogram
-asyncpg
+aiogram==3.10.0
+aiogram==3.10.0
 redis
+sqlalchemy
+alembic
 fastapi
-uvicorn[standard]
-pydantic
+uvicorn
+pydantic-settings
 python-dotenv
-httpx
