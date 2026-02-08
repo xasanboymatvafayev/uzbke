@@ -14,7 +14,8 @@ from decimal import Decimal
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 from enum import Enum
-
+from dotenv import load_dotenv
+from typing import List, Optional
 import asyncpg
 from aiogram import Bot, Dispatcher, F, Router, html
 from aiogram.client.default import DefaultBotProperties
@@ -47,7 +48,9 @@ import uvicorn
 @dataclass
 class Config:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-    ADMIN_IDS: List[int] = list(map(int, os.getenv("ADMIN_IDS", "123456789").split(",")))
+    ADMIN_IDS: List[int] = field(default_factory=lambda: [
+        int(x.strip()) for x in os.getenv("ADMIN_IDS", "123456789").split(",") if x.strip()
+    ])
     DB_URL: str = os.getenv("DB_URL", "postgresql://postgres:password@localhost:5432/food_delivery")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     SHOP_CHANNEL_ID: str = os.getenv("SHOP_CHANNEL_ID", "-1001234567890")
@@ -58,8 +61,6 @@ class Config:
     def __post_init__(self):
         if not self.BOT_TOKEN:
             raise ValueError("BOT_TOKEN is required")
-
-config = Config()
 
 # ============================
 # Database Models
