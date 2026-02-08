@@ -749,7 +749,7 @@
         </div>
 
         <!-- Floating Cart -->
-        <div class="floating-cart" id="floatingCart">
+        <div class="floating-cart" id="floatingCart" style="display: none;">
             <div class="cart-icon">🛒</div>
             <div class="cart-count" id="cartCount">0</div>
         </div>
@@ -842,6 +842,7 @@
         // Configuration
         // ============================
         const BACKEND_URL = 'https://uzbke-production.up.railway.app';
+        const MIN_ORDER_AMOUNT = 50000;
         
         // Telegram WebApp initialization
         const tg = window.Telegram.WebApp;
@@ -909,6 +910,7 @@
         }
         
         function showError(message) {
+            console.error('Error:', message);
             loadingEl.style.display = 'none';
             errorMessageEl.textContent = message;
             errorStateEl.style.display = 'flex';
@@ -924,54 +926,73 @@
         // API Functions
         // ============================
         
-        async function fetchWithRetry(url, options = {}, retries = 3) {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
+        async function fetchData(url, options = {}) {
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'Accept': 'application/json',
+                        ...options.headers
                     }
-                    return await response.json();
-                } catch (error) {
-                    if (i === retries - 1) throw error;
-                    await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('Fetch error:', error);
+                throw error;
             }
         }
         
-        async function fetchCategories() {
+        async function loadCategories() {
             try {
                 const initData = tg.initData;
-                const response = await fetchWithRetry(
-                    `${BACKEND_URL}/api/categories?initData=${encodeURIComponent(initData)}`
-                );
-                return response;
+                let url = `${BACKEND_URL}/api/categories`;
+                
+                if (initData) {
+                    url += `?initData=${encodeURIComponent(initData)}`;
+                }
+                
+                const data = await fetchData(url);
+                return data;
             } catch (error) {
-                console.error('Error fetching categories:', error);
-                throw new Error('Не удалось загрузить категории');
+                console.error('Error loading categories:', error);
+                // Return empty array if error
+                return [];
             }
         }
         
-        async function fetchFoods() {
+        async function loadFoods() {
             try {
                 const initData = tg.initData;
-                const response = await fetchWithRetry(
-                    `${BACKEND_URL}/api/foods?initData=${encodeURIComponent(initData)}`
-                );
-                return response;
+                let url = `${BACKEND_URL}/api/foods`;
+                
+                if (initData) {
+                    url += `?initData=${encodeURIComponent(initData)}`;
+                }
+                
+                const data = await fetchData(url);
+                return data;
             } catch (error) {
-                console.error('Error fetching foods:', error);
-                throw new Error('Не удалось загрузить меню');
+                console.error('Error loading foods:', error);
+                throw new Error('Не удалось загрузить меню. Пожалуйста, попробуйте позже.');
             }
         }
         
         async function validatePromoCode(code) {
             try {
                 const initData = tg.initData;
-                const response = await fetch(
-                    `${BACKEND_URL}/api/promo/validate?code=${code}&initData=${encodeURIComponent(initData)}`
-                );
-                return await response.json();
+                let url = `${BACKEND_URL}/api/promo/validate?code=${encodeURIComponent(code)}`;
+                
+                if (initData) {
+                    url += `&initData=${encodeURIComponent(initData)}`;
+                }
+                
+                const data = await fetchData(url);
+                return data;
             } catch (error) {
                 console.error('Error validating promo:', error);
                 return { valid: false };
@@ -982,16 +1003,17 @@
         // Data Loading
         // ============================
         
-        async function loadData() {
+        async function loadAllData() {
             try {
                 hideError();
                 loadingEl.style.display = 'flex';
                 
-                // Load categories and foods in parallel
-                [categories, foods] = await Promise.all([
-                    fetchCategories(),
-                    fetchFoods()
-                ]);
+                // Load categories and foods
+                categories = await loadCategories();
+                foods = await loadFoods();
+                
+                console.log('Loaded categories:', categories.length);
+                console.log('Loaded foods:', foods.length);
                 
                 // Set user name from Telegram
                 const user = tg.initDataUnsafe.user;
@@ -1009,6 +1031,15 @@
                 setTimeout(() => {
                     loadingEl.style.display = 'none';
                     appContent.style.display = 'block';
+                    
+                    // Show welcome message
+                    if (foods.length > 0) {
+                        tg.showPopup({
+                            title: 'Добро пожаловать!',
+                            message: 'Меню успешно загружено. Выберите блюда и оформите заказ.',
+                            buttons: [{ type: 'ok' }]
+                        });
+                    }
                 }, 500);
                 
             } catch (error) {
@@ -1065,7 +1096,7 @@
             if (searchTerm) {
                 filteredFoods = filteredFoods.filter(food => 
                     food.name.toLowerCase().includes(searchTerm) ||
-                    food.description.toLowerCase().includes(searchTerm)
+                    (food.description && food.description.toLowerCase().includes(searchTerm))
                 );
             }
             
@@ -1106,16 +1137,18 @@
                 card.className = 'food-card';
                 card.innerHTML = `
                     <div class="food-image">
-                        ${food.image_url ? `<img src="${food.image_url}" alt="${food.name}" onerror="this.style.display='none'">` : ''}
+                        <img src="${food.image_url || 'https://via.placeholder.com/300x200/2d2d2d/808080?text=No+Image'}" 
+                             alt="${food.name}"
+                             onerror="this.src='https://via.placeholder.com/300x200/2d2d2d/808080?text=Image+Error'">
                         ${food.is_new ? '<div class="food-badge">NEW</div>' : ''}
                     </div>
                     <div class="food-info">
                         <div class="food-name">${food.name}</div>
-                        <div class="food-desc">${food.description}</div>
+                        <div class="food-desc">${food.description || 'Вкусное блюдо'}</div>
                         <div class="food-bottom">
                             <div>
                                 <div class="food-price">${formatPrice(food.price)} сум</div>
-                                <div class="food-rating">⭐ ${food.rating.toFixed(1)}</div>
+                                <div class="food-rating">⭐ ${food.rating?.toFixed(1) || '5.0'}</div>
                             </div>
                             <button class="add-btn ${inCart ? 'added' : ''}" data-id="${food.id}">
                                 ${inCart ? `✓ ${inCart}` : 'Добавить'}
@@ -1152,7 +1185,9 @@
             showCart();
             
             // Show feedback
-            tg.HapticFeedback.impactOccurred('light');
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.impactOccurred('light');
+            }
         }
         
         function removeFromCart(foodId) {
@@ -1167,7 +1202,9 @@
                 renderFoods();
                 
                 // Show feedback
-                tg.HapticFeedback.impactOccurred('light');
+                if (tg.HapticFeedback) {
+                    tg.HapticFeedback.impactOccurred('light');
+                }
             }
         }
         
@@ -1234,10 +1271,9 @@
             checkoutTotal.textContent = formatPrice(total);
             
             // Enable/disable checkout button
-            const minOrder = 50000;
-            checkoutBtn.disabled = total < minOrder || totalItems === 0;
-            checkoutBtn.innerHTML = total < minOrder 
-                ? `Минимум ${formatPrice(minOrder)} сум`
+            checkoutBtn.disabled = total < MIN_ORDER_AMOUNT || totalItems === 0;
+            checkoutBtn.innerHTML = total < MIN_ORDER_AMOUNT 
+                ? `Минимум ${formatPrice(MIN_ORDER_AMOUNT)} сум`
                 : 'Оформить заказ';
             
             // Update submit button
@@ -1286,7 +1322,9 @@
                     submitOrderBtn.disabled = false;
                     
                     // Show feedback
-                    tg.HapticFeedback.notificationOccurred('success');
+                    if (tg.HapticFeedback) {
+                        tg.HapticFeedback.notificationOccurred('success');
+                    }
                 },
                 (error) => {
                     console.error('Geolocation error:', error);
@@ -1310,7 +1348,9 @@
                     getLocationBtn.disabled = false;
                     
                     // Show feedback
-                    tg.HapticFeedback.notificationOccurred('error');
+                    if (tg.HapticFeedback) {
+                        tg.HapticFeedback.notificationOccurred('error');
+                    }
                 },
                 {
                     enableHighAccuracy: true,
@@ -1342,14 +1382,18 @@
                 updateCart();
                 
                 // Show feedback
-                tg.HapticFeedback.notificationOccurred('success');
+                if (tg.HapticFeedback) {
+                    tg.HapticFeedback.notificationOccurred('success');
+                }
             } else {
                 promoError.textContent = 'Неверный или истекший промокод';
                 promoError.style.display = 'block';
                 promoSuccess.style.display = 'none';
                 
                 // Show feedback
-                tg.HapticFeedback.notificationOccurred('error');
+                if (tg.HapticFeedback) {
+                    tg.HapticFeedback.notificationOccurred('error');
+                }
             }
         }
         
@@ -1391,11 +1435,18 @@
                 created_at_client: new Date().toISOString()
             };
             
+            console.log('Sending order data:', orderData);
+            
             // Send data to Telegram bot
             tg.sendData(JSON.stringify(orderData));
             
             // Show confirmation
             tg.showAlert('✅ Заказ успешно оформлен! Ожидайте подтверждения.');
+            
+            // Clear cart and close modals
+            cart = [];
+            updateCart();
+            checkoutModal.classList.remove('open');
             
             // Close WebApp after delay
             setTimeout(() => {
@@ -1426,7 +1477,9 @@
                 filterModal.classList.remove('open');
                 
                 // Show feedback
-                tg.HapticFeedback.selectionChanged();
+                if (tg.HapticFeedback) {
+                    tg.HapticFeedback.selectionChanged();
+                }
             }
         });
         
@@ -1497,7 +1550,7 @@
             e.target.value = value;
         });
         
-        retryBtn.addEventListener('click', loadData);
+        retryBtn.addEventListener('click', loadAllData);
         
         // ============================
         // Initialize App
@@ -1510,43 +1563,41 @@
                 return;
             }
             
-            // Check if initData is available
-            if (!tg.initData) {
-                showError('Ошибка инициализации. Пожалуйста, перезагрузите приложение.');
-                return;
-            }
+            console.log('Telegram WebApp initialized:', tg.initDataUnsafe);
             
             // Load data
-            loadData();
+            loadAllData();
         });
         
         // Handle back button in Telegram
-        tg.BackButton.onClick(() => {
-            if (checkoutModal.classList.contains('open')) {
-                checkoutModal.classList.remove('open');
-            } else if (cartEl.classList.contains('open')) {
-                hideCart();
-            } else if (filterModal.classList.contains('open')) {
-                filterModal.classList.remove('open');
-            }
-        });
-        
-        // Show/hide back button based on modal state
-        const observer = new MutationObserver((mutations) => {
-            const hasModalOpen = checkoutModal.classList.contains('open') || 
-                                cartEl.classList.contains('open') || 
-                                filterModal.classList.contains('open');
+        if (tg.BackButton) {
+            tg.BackButton.onClick(() => {
+                if (checkoutModal.classList.contains('open')) {
+                    checkoutModal.classList.remove('open');
+                } else if (cartEl.classList.contains('open')) {
+                    hideCart();
+                } else if (filterModal.classList.contains('open')) {
+                    filterModal.classList.remove('open');
+                }
+            });
             
-            if (hasModalOpen) {
-                tg.BackButton.show();
-            } else {
-                tg.BackButton.hide();
-            }
-        });
-        
-        observer.observe(checkoutModal, { attributes: true, attributeFilter: ['class'] });
-        observer.observe(cartEl, { attributes: true, attributeFilter: ['class'] });
-        observer.observe(filterModal, { attributes: true, attributeFilter: ['class'] });
+            // Show/hide back button based on modal state
+            const observer = new MutationObserver((mutations) => {
+                const hasModalOpen = checkoutModal.classList.contains('open') || 
+                                    cartEl.classList.contains('open') || 
+                                    filterModal.classList.contains('open');
+                
+                if (hasModalOpen) {
+                    tg.BackButton.show();
+                } else {
+                    tg.BackButton.hide();
+                }
+            });
+            
+            observer.observe(checkoutModal, { attributes: true, attributeFilter: ['class'] });
+            observer.observe(cartEl, { attributes: true, attributeFilter: ['class'] });
+            observer.observe(filterModal, { attributes: true, attributeFilter: ['class'] });
+        }
     </script>
 </body>
 </html>
