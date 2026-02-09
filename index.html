@@ -1,165 +1,119 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FIESTA Food Delivery</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FIESTA - Доставка еды</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        :root {
-            --bg-primary: #0f0f0f;
-            --bg-secondary: #1a1a1a;
-            --bg-card: #252525;
-            --accent-primary: #ff6b35;
-            --accent-secondary: #ffa500;
-            --text-primary: #ffffff;
-            --text-secondary: #b0b0b0;
-            --text-muted: #777777;
-            --border-color: #333333;
-            --success-color: #4CAF50;
-            --warning-color: #ff9800;
-            --error-color: #f44336;
-            --shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-            --border-radius: 12px;
-            --transition: all 0.3s ease;
-        }
-
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.6;
-            overflow-x: hidden;
+        :root {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --bg-card: #242424;
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0b0;
+            --accent: #ff6b35;
+            --accent-hover: #ff8555;
+            --success: #4caf50;
+            --border: #3a3a3a;
         }
 
-        .container {
-            max-width: 100%;
-            padding: 15px;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             padding-bottom: 100px;
+            min-height: 100vh;
         }
 
         /* Header */
         .header {
-            background-color: var(--bg-secondary);
-            padding: 15px;
             position: sticky;
             top: 0;
+            background: var(--bg-secondary);
+            padding: 15px;
             z-index: 100;
-            box-shadow: var(--shadow);
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border);
         }
 
-        .logo {
+        .search-container {
             display: flex;
             align-items: center;
             gap: 10px;
-            margin-bottom: 15px;
-        }
-
-        .logo-icon {
-            color: var(--accent-primary);
-            font-size: 24px;
-        }
-
-        .logo-text {
-            font-size: 24px;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .search-bar {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 12px 15px;
+            border: 1px solid var(--border);
         }
 
         .search-input {
             flex: 1;
-            padding: 12px 15px;
-            background-color: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius);
+            background: transparent;
+            border: none;
             color: var(--text-primary);
             font-size: 16px;
-            transition: var(--transition);
+            outline: none;
         }
 
-        .search-input:focus {
-            outline: none;
-            border-color: var(--accent-primary);
+        .search-input::placeholder {
+            color: var(--text-secondary);
         }
 
         .filter-btn {
-            background-color: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius);
-            color: var(--text-secondary);
-            width: 50px;
+            background: var(--accent);
+            border: none;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            cursor: pointer;
-            transition: var(--transition);
+            font-size: 20px;
+            transition: background 0.3s;
         }
 
         .filter-btn:hover {
-            color: var(--accent-primary);
-            border-color: var(--accent-primary);
+            background: var(--accent-hover);
         }
 
         /* Categories */
         .categories {
-            margin-bottom: 20px;
-            overflow-x: auto;
             display: flex;
             gap: 10px;
-            padding-bottom: 5px;
+            overflow-x: auto;
+            padding: 15px;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
         }
 
         .categories::-webkit-scrollbar {
-            height: 4px;
-        }
-
-        .categories::-webkit-scrollbar-track {
-            background: var(--bg-secondary);
-        }
-
-        .categories::-webkit-scrollbar-thumb {
-            background: var(--accent-primary);
-            border-radius: 10px;
+            display: none;
         }
 
         .category-btn {
-            padding: 8px 16px;
-            background-color: var(--bg-card);
-            border: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 20px;
             border-radius: 20px;
-            color: var(--text-secondary);
-            font-size: 14px;
-            font-weight: 500;
             white-space: nowrap;
             cursor: pointer;
-            transition: var(--transition);
+            transition: all 0.3s;
+            font-size: 14px;
+            font-weight: 500;
         }
 
         .category-btn.active {
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            color: var(--text-primary);
-            font-weight: 600;
-        }
-
-        .category-btn:hover:not(.active) {
-            background-color: var(--bg-secondary);
-            color: var(--text-primary);
+            background: var(--accent);
+            border-color: var(--accent);
         }
 
         /* Food Grid */
@@ -167,28 +121,50 @@
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
             gap: 15px;
+            padding: 0 15px 15px;
         }
 
         .food-card {
-            background-color: var(--bg-card);
-            border-radius: var(--border-radius);
+            background: var(--bg-card);
+            border-radius: 16px;
             overflow: hidden;
-            transition: var(--transition);
+            border: 1px solid var(--border);
+            transition: transform 0.2s, box-shadow 0.2s;
             cursor: pointer;
-            border: 1px solid var(--border-color);
         }
 
         .food-card:hover {
-            transform: translateY(-5px);
-            box-shadow: var(--shadow);
-            border-color: var(--accent-primary);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
         }
 
         .food-image {
             width: 100%;
             height: 140px;
+            background: linear-gradient(135deg, var(--accent) 0%, #ff8555 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 50px;
+            position: relative;
+        }
+
+        .food-image img {
+            width: 100%;
+            height: 100%;
             object-fit: cover;
-            background-color: var(--bg-secondary);
+        }
+
+        .new-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--success);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
         }
 
         .food-info {
@@ -196,119 +172,180 @@
         }
 
         .food-name {
-            font-size: 16px;
             font-weight: 600;
-            margin-bottom: 5px;
-            white-space: nowrap;
+            font-size: 15px;
+            margin-bottom: 4px;
             overflow: hidden;
             text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .food-desc {
             font-size: 12px;
             color: var(--text-secondary);
-            margin-bottom: 10px;
-            height: 36px;
+            margin-bottom: 8px;
             overflow: hidden;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
-        .food-footer {
+        .food-bottom {
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .food-price {
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--accent-primary);
+            font-weight: bold;
+            color: var(--accent);
+            font-size: 16px;
+        }
+
+        .rating {
+            font-size: 13px;
+            color: #ffc107;
         }
 
         .add-btn {
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            color: white;
+            background: var(--accent);
             border: none;
-            border-radius: 8px;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 10px;
             cursor: pointer;
-            transition: var(--transition);
+            font-weight: 600;
+            font-size: 13px;
+            transition: background 0.3s;
+            margin-top: 8px;
+            width: 100%;
         }
 
         .add-btn:hover {
-            transform: scale(1.1);
-        }
-
-        .add-btn i {
-            font-size: 18px;
+            background: var(--accent-hover);
         }
 
         /* Cart */
-        .cart-container {
+        .cart-float {
             position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background-color: var(--bg-secondary);
-            border-top: 1px solid var(--border-color);
-            padding: 15px;
-            transform: translateY(100%);
-            transition: transform 0.3s ease;
-            z-index: 1000;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        .cart-container.show {
-            transform: translateY(0);
-        }
-
-        .cart-header {
+            bottom: 20px;
+            right: 20px;
+            left: 20px;
+            background: var(--accent);
+            border-radius: 16px;
+            padding: 15px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .cart-title {
-            font-size: 20px;
-            font-weight: 600;
-        }
-
-        .close-cart {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            font-size: 24px;
+            box-shadow: 0 8px 30px rgba(255, 107, 53, 0.4);
             cursor: pointer;
-            transition: var(--transition);
+            z-index: 1000;
+            transition: transform 0.3s;
         }
 
-        .close-cart:hover {
-            color: var(--accent-primary);
+        .cart-float:hover {
+            transform: scale(1.02);
         }
 
+        .cart-float.hidden {
+            display: none;
+        }
+
+        .cart-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .cart-count {
+            background: white;
+            color: var(--accent);
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .cart-total {
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .cart-arrow {
+            color: white;
+            font-size: 20px;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 2000;
+            overflow-y: auto;
+            animation: fadeIn 0.3s;
+        }
+
+        .modal.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            margin: 20px;
+            border-radius: 20px;
+            padding: 25px;
+            max-width: 500px;
+            margin: 50px auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 22px;
+            font-weight: bold;
+        }
+
+        .close-btn {
+            background: var(--bg-card);
+            border: none;
+            color: var(--text-primary);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+        }
+
+        /* Cart Items */
         .cart-items {
             margin-bottom: 20px;
         }
 
         .cart-item {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            padding: 10px 0;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .cart-item:last-child {
-            border-bottom: none;
+            padding: 15px 0;
+            border-bottom: 1px solid var(--border);
         }
 
         .cart-item-info {
@@ -317,695 +354,328 @@
 
         .cart-item-name {
             font-weight: 600;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
         }
 
         .cart-item-price {
-            color: var(--accent-primary);
-            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 14px;
         }
 
         .cart-item-controls {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
 
-        .quantity-btn {
-            background-color: var(--bg-card);
-            border: none;
+        .qty-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
             color: var(--text-primary);
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 18px;
             display: flex;
             align-items: center;
             justify-content: center;
-            cursor: pointer;
-            transition: var(--transition);
         }
 
-        .quantity-btn:hover {
-            background-color: var(--accent-primary);
-        }
-
-        .cart-item-quantity {
-            font-weight: 600;
-            min-width: 20px;
+        .qty-value {
+            min-width: 30px;
             text-align: center;
-        }
-
-        .remove-item {
-            color: var(--error-color);
-            background: none;
-            border: none;
-            font-size: 18px;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .remove-item:hover {
-            transform: scale(1.2);
-        }
-
-        .cart-total {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-top: 15px;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .total-label {
-            font-size: 18px;
             font-weight: 600;
         }
 
-        .total-amount {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--accent-primary);
-        }
-
-        .checkout-btn {
-            width: 100%;
-            padding: 15px;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            color: white;
-            border: none;
-            border-radius: var(--border-radius);
-            font-size: 18px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .checkout-btn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow);
-        }
-
-        .checkout-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        /* Cart Floating Button */
-        .cart-floating {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            color: white;
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
+        /* Checkout Form */
+        .checkout-form {
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: var(--shadow);
-            z-index: 999;
-            transition: var(--transition);
-        }
-
-        .cart-floating:hover {
-            transform: scale(1.1);
-        }
-
-        .cart-floating-count {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background-color: var(--error-color);
-            color: white;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .cart-floating-icon {
-            font-size: 24px;
-        }
-
-        .cart-floating-total {
-            font-size: 12px;
-            margin-top: 2px;
-            font-weight: 600;
-        }
-
-        /* Checkout Modal */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: rgba(0, 0, 0, 0.8);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 2000;
-            padding: 20px;
-        }
-
-        .modal-overlay.show {
-            display: flex;
-        }
-
-        .modal {
-            background-color: var(--bg-secondary);
-            border-radius: var(--border-radius);
-            max-width: 500px;
-            width: 100%;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            padding: 20px;
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .modal-title {
-            font-size: 22px;
-            font-weight: 600;
-        }
-
-        .close-modal {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            font-size: 24px;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .close-modal:hover {
-            color: var(--accent-primary);
-        }
-
-        .modal-body {
-            padding: 20px;
+            gap: 15px;
         }
 
         .form-group {
-            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
 
         .form-label {
-            display: block;
-            margin-bottom: 8px;
+            font-size: 14px;
             font-weight: 600;
             color: var(--text-secondary);
         }
 
         .form-input {
-            width: 100%;
-            padding: 12px 15px;
-            background-color: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
             color: var(--text-primary);
+            padding: 12px 15px;
+            border-radius: 10px;
             font-size: 16px;
-            transition: var(--transition);
+            outline: none;
+            transition: border-color 0.3s;
         }
 
         .form-input:focus {
-            outline: none;
-            border-color: var(--accent-primary);
+            border-color: var(--accent);
         }
 
-        .textarea {
-            min-height: 100px;
-            resize: vertical;
-        }
-
-        .location-btn {
-            width: 100%;
-            padding: 15px;
-            background-color: var(--bg-card);
-            border: 2px dashed var(--border-color);
-            border-radius: var(--border-radius);
-            color: var(--text-secondary);
-            font-size: 16px;
+        .geo-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 12px 15px;
+            border-radius: 10px;
             cursor: pointer;
-            transition: var(--transition);
             display: flex;
-            flex-direction: column;
             align-items: center;
             gap: 10px;
+            transition: all 0.3s;
+            font-size: 16px;
         }
 
-        .location-btn:hover {
-            border-color: var(--accent-primary);
-            color: var(--accent-primary);
+        .geo-btn.active {
+            border-color: var(--success);
+            background: rgba(76, 175, 80, 0.1);
         }
 
-        .location-btn i {
-            font-size: 24px;
+        .geo-btn:hover {
+            border-color: var(--accent);
         }
 
-        .promo-group {
-            display: flex;
-            gap: 10px;
-        }
-
-        .promo-input {
-            flex: 1;
-        }
-
-        .apply-promo-btn {
-            padding: 0 20px;
-            background-color: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius);
-            color: var(--text-primary);
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .apply-promo-btn:hover {
-            background-color: var(--accent-primary);
-            border-color: var(--accent-primary);
-        }
-
-        .order-summary {
-            background-color: var(--bg-card);
-            border-radius: var(--border-radius);
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-
-        .summary-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-        }
-
-        .summary-row.total {
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid var(--border-color);
-            font-size: 18px;
-            font-weight: 600;
-        }
-
-        .submit-order-btn {
-            width: 100%;
-            padding: 15px;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            color: white;
+        .submit-btn {
+            background: var(--accent);
             border: none;
-            border-radius: var(--border-radius);
+            color: white;
+            padding: 16px;
+            border-radius: 12px;
             font-size: 18px;
-            font-weight: 600;
+            font-weight: bold;
             cursor: pointer;
-            transition: var(--transition);
+            margin-top: 10px;
+            transition: background 0.3s;
         }
 
-        .submit-order-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow);
+        .submit-btn:hover {
+            background: var(--accent-hover);
         }
 
-        /* Filter Modal */
-        .filter-modal {
-            max-width: 400px;
+        .submit-btn:disabled {
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            cursor: not-allowed;
         }
 
-        .filter-options {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .filter-option {
+        .total-block {
+            background: var(--bg-card);
             padding: 15px;
-            background-color: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius);
-            color: var(--text-primary);
-            font-size: 16px;
-            cursor: pointer;
-            transition: var(--transition);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .total-row {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            margin-bottom: 8px;
         }
 
-        .filter-option:hover {
-            border-color: var(--accent-primary);
-            color: var(--accent-primary);
+        .total-label {
+            color: var(--text-secondary);
         }
 
-        .filter-option.active {
-            background-color: var(--accent-primary);
-            border-color: var(--accent-primary);
-            color: white;
+        .total-value {
+            font-weight: bold;
         }
 
-        /* Loader */
-        .loader {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 300px;
-            gap: 20px;
+        .total-final {
+            font-size: 20px;
+            color: var(--accent);
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+            margin-top: 10px;
         }
 
-        .spinner {
-            width: 50px;
-            height: 50px;
-            border: 4px solid var(--border-color);
-            border-top: 4px solid var(--accent-primary);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
+        .error-msg {
+            color: #f44336;
+            font-size: 14px;
+            margin-top: 5px;
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Empty State */
-        .empty-state {
+        .empty-cart {
             text-align: center;
             padding: 40px 20px;
             color: var(--text-secondary);
         }
 
-        .empty-state i {
-            font-size: 48px;
-            margin-bottom: 15px;
-            color: var(--text-muted);
+        .empty-cart-icon {
+            font-size: 60px;
+            margin-bottom: 10px;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .food-grid {
-                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-            }
-            
-            .modal {
-                max-height: 80vh;
-            }
+        /* Filter Modal */
+        .filter-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
 
-        @media (max-width: 480px) {
-            .food-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .container {
-                padding: 10px;
-                padding-bottom: 100px;
-            }
-            
-            .header {
-                padding: 10px;
-            }
+        .filter-option {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 15px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .filter-option:hover {
+            border-color: var(--accent);
+        }
+
+        .filter-option.active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .no-items {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-secondary);
         }
     </style>
 </head>
 <body>
+    <!-- Header -->
     <div class="header">
-        <div class="logo">
-            <div class="logo-icon">🍔</div>
-            <div class="logo-text">FIESTA</div>
-        </div>
-        
-        <div class="search-bar">
-            <input type="text" class="search-input" placeholder="Search food..." id="searchInput">
-            <button class="filter-btn" id="filterBtn">
-                <i class="fas fa-sliders-h"></i>
-            </button>
-        </div>
-        
-        <div class="categories" id="categories">
-            <!-- Categories will be loaded here -->
+        <div class="search-container">
+            <span>🔍</span>
+            <input type="text" class="search-input" id="searchInput" placeholder="Поиск блюд...">
+            <button class="filter-btn" id="filterBtn">⚙️</button>
         </div>
     </div>
 
-    <div class="container">
-        <div class="food-grid" id="foodGrid">
-            <!-- Food items will be loaded here -->
-        </div>
-        
-        <div class="loader" id="loader">
-            <div class="spinner"></div>
-            <div>Loading menu...</div>
-        </div>
-        
-        <div class="empty-state" id="emptyState" style="display: none;">
-            <i class="fas fa-utensils"></i>
-            <h3>No food items found</h3>
-            <p>Try changing your search or filter</p>
-        </div>
+    <!-- Categories -->
+    <div class="categories" id="categories">
+        <button class="category-btn active" data-category="all">Все</button>
+        <button class="category-btn" data-category="Lavash">Lavash</button>
+        <button class="category-btn" data-category="Burger">Burger</button>
+        <button class="category-btn" data-category="Xaggi">Xaggi</button>
+        <button class="category-btn" data-category="Shaurma">Shaurma</button>
+        <button class="category-btn" data-category="Hotdog">Hotdog</button>
+        <button class="category-btn" data-category="Combo">Combo</button>
+        <button class="category-btn" data-category="Sneki">Sneki</button>
+        <button class="category-btn" data-category="Sous">Sous</button>
+        <button class="category-btn" data-category="Napitki">Napitki</button>
     </div>
 
-    <!-- Cart Floating Button -->
-    <div class="cart-floating" id="cartFloating">
-        <div class="cart-floating-count" id="cartCount">0</div>
-        <div class="cart-floating-icon">🛒</div>
-        <div class="cart-floating-total" id="cartTotal">0</div>
+    <!-- Food Grid -->
+    <div class="food-grid" id="foodGrid">
+        <div class="loading">Загрузка...</div>
     </div>
 
-    <!-- Cart Sidebar -->
-    <div class="cart-container" id="cartContainer">
-        <div class="cart-header">
-            <div class="cart-title">Your Cart</div>
-            <button class="close-cart" id="closeCart">×</button>
+    <!-- Floating Cart -->
+    <div class="cart-float hidden" id="cartFloat">
+        <div class="cart-info">
+            <div class="cart-count" id="cartCount">0</div>
+            <div class="cart-total" id="cartTotal">0 сум</div>
         </div>
-        
-        <div class="cart-items" id="cartItems">
-            <!-- Cart items will be added here -->
+        <div class="cart-arrow">→</div>
+    </div>
+
+    <!-- Cart Modal -->
+    <div class="modal" id="cartModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">🛒 Корзина</div>
+                <button class="close-btn" id="closeCart">×</button>
+            </div>
+            <div class="cart-items" id="cartItemsList"></div>
+            <div class="total-block" id="totalBlock"></div>
+            <button class="submit-btn" id="proceedCheckout">Оформить заказ</button>
         </div>
-        
-        <div class="cart-total">
-            <div class="total-label">Total:</div>
-            <div class="total-amount" id="cartTotalAmount">0</div>
-        </div>
-        
-        <button class="checkout-btn" id="checkoutBtn" disabled>Checkout</button>
     </div>
 
     <!-- Checkout Modal -->
-    <div class="modal-overlay" id="checkoutModal">
-        <div class="modal">
+    <div class="modal" id="checkoutModal">
+        <div class="modal-content">
             <div class="modal-header">
-                <div class="modal-title">Checkout</div>
-                <button class="close-modal" id="closeCheckout">×</button>
+                <div class="modal-title">📝 Оформление заказа</div>
+                <button class="close-btn" id="closeCheckout">×</button>
             </div>
-            
-            <div class="modal-body">
+            <form class="checkout-form" id="checkoutForm">
                 <div class="form-group">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-input" id="customerName" placeholder="Enter your name">
+                    <label class="form-label">Имя</label>
+                    <input type="text" class="form-input" id="customerName" required>
                 </div>
-                
                 <div class="form-group">
-                    <label class="form-label">Phone Number</label>
-                    <input type="tel" class="form-input" id="customerPhone" placeholder="+998 XX XXX XX XX">
+                    <label class="form-label">Телефон</label>
+                    <input type="tel" class="form-input" id="customerPhone" placeholder="+998 __ ___ __ __" required>
                 </div>
-                
                 <div class="form-group">
-                    <label class="form-label">Comment (optional)</label>
-                    <textarea class="form-input textarea" id="customerComment" placeholder="Special instructions..."></textarea>
+                    <label class="form-label">Комментарий (необязательно)</label>
+                    <input type="text" class="form-input" id="orderComment" placeholder="Пожелания к заказу">
                 </div>
-                
                 <div class="form-group">
-                    <label class="form-label">Location</label>
-                    <button class="location-btn" id="getLocationBtn">
-                        <i class="fas fa-map-marker-alt"></i>
-                        <span>Get Current Location</span>
+                    <label class="form-label">Локация *</label>
+                    <button type="button" class="geo-btn" id="geoBtn">
+                        📍 <span id="geoText">Определить локацию</span>
                     </button>
-                    <div id="locationStatus" style="margin-top: 10px; font-size: 14px; color: var(--text-secondary);">
-                        Location not set
-                    </div>
-                    <input type="hidden" id="locationLat">
-                    <input type="hidden" id="locationLng">
+                    <span class="error-msg" id="geoError"></span>
                 </div>
-                
-                <div class="form-group">
-                    <label class="form-label">Promo Code (optional)</label>
-                    <div class="promo-group">
-                        <input type="text" class="form-input promo-input" id="promoCode" placeholder="Enter promo code">
-                        <button class="apply-promo-btn" id="applyPromoBtn">Apply</button>
-                    </div>
-                    <div id="promoMessage" style="margin-top: 5px; font-size: 14px;"></div>
-                </div>
-                
-                <div class="order-summary">
-                    <div class="summary-row">
-                        <span>Subtotal:</span>
-                        <span id="summarySubtotal">0</span>
-                    </div>
-                    <div class="summary-row" id="discountRow" style="display: none;">
-                        <span>Discount:</span>
-                        <span id="summaryDiscount">0</span>
-                    </div>
-                    <div class="summary-row total">
-                        <span>Total:</span>
-                        <span id="summaryTotal">0</span>
-                    </div>
-                </div>
-                
-                <button class="submit-order-btn" id="submitOrderBtn">Place Order</button>
-            </div>
+                <div class="total-block" id="checkoutTotal"></div>
+                <button type="submit" class="submit-btn" id="submitOrder" disabled>Отправить заказ</button>
+            </form>
         </div>
     </div>
 
     <!-- Filter Modal -->
-    <div class="modal-overlay" id="filterModal">
-        <div class="modal filter-modal">
+    <div class="modal" id="filterModal">
+        <div class="modal-content">
             <div class="modal-header">
-                <div class="modal-title">Filter & Sort</div>
-                <button class="close-modal" id="closeFilter">×</button>
+                <div class="modal-title">⚙️ Сортировка</div>
+                <button class="close-btn" id="closeFilter">×</button>
             </div>
-            
-            <div class="modal-body">
-                <div class="filter-options">
-                    <div class="filter-option" data-sort="rating_desc">
-                        <span>Highest Rating</span>
-                        <i class="fas fa-star"></i>
-                    </div>
-                    <div class="filter-option" data-sort="newest">
-                        <span>Newest</span>
-                        <i class="fas fa-clock"></i>
-                    </div>
-                    <div class="filter-option" data-sort="price_asc">
-                        <span>Price: Low to High</span>
-                        <i class="fas fa-sort-amount-down"></i>
-                    </div>
-                    <div class="filter-option" data-sort="price_desc">
-                        <span>Price: High to Low</span>
-                        <i class="fas fa-sort-amount-up"></i>
-                    </div>
-                </div>
+            <div class="filter-options">
+                <div class="filter-option active" data-sort="default">По умолчанию</div>
+                <div class="filter-option" data-sort="rating">По рейтингу</div>
+                <div class="filter-option" data-sort="new">Новые блюда</div>
+                <div class="filter-option" data-sort="price-asc">Дешевые</div>
+                <div class="filter-option" data-sort="price-desc">Дорогие</div>
             </div>
         </div>
     </div>
 
     <script>
-        // Telegram WebApp
+        // Initialize Telegram WebApp
         const tg = window.Telegram.WebApp;
+        tg.ready();
         tg.expand();
-        tg.MainButton.hide();
-        
+
         // State
-        let foods = [];
-        let categories = [];
-        let cart = JSON.parse(localStorage.getItem('cart')) || [];
-        let currentCategory = 'all';
-        let currentSort = 'default';
-        let currentLocation = null;
-        let appliedPromo = null;
-        
-        // DOM Elements
-        const foodGrid = document.getElementById('foodGrid');
-        const categoriesContainer = document.getElementById('categories');
-        const loader = document.getElementById('loader');
-        const emptyState = document.getElementById('emptyState');
-        const cartFloating = document.getElementById('cartFloating');
-        const cartContainer = document.getElementById('cartContainer');
-        const closeCart = document.getElementById('closeCart');
-        const cartItems = document.getElementById('cartItems');
-        const cartCount = document.getElementById('cartCount');
-        const cartTotal = document.getElementById('cartTotal');
-        const cartTotalAmount = document.getElementById('cartTotalAmount');
-        const checkoutBtn = document.getElementById('checkoutBtn');
-        const checkoutModal = document.getElementById('checkoutModal');
-        const closeCheckout = document.getElementById('closeCheckout');
-        const customerName = document.getElementById('customerName');
-        const customerPhone = document.getElementById('customerPhone');
-        const customerComment = document.getElementById('customerComment');
-        const getLocationBtn = document.getElementById('getLocationBtn');
-        const locationStatus = document.getElementById('locationStatus');
-        const locationLat = document.getElementById('locationLat');
-        const locationLng = document.getElementById('locationLng');
-        const promoCode = document.getElementById('promoCode');
-        const applyPromoBtn = document.getElementById('applyPromoBtn');
-        const promoMessage = document.getElementById('promoMessage');
-        const summarySubtotal = document.getElementById('summarySubtotal');
-        const discountRow = document.getElementById('discountRow');
-        const summaryDiscount = document.getElementById('summaryDiscount');
-        const summaryTotal = document.getElementById('summaryTotal');
-        const submitOrderBtn = document.getElementById('submitOrderBtn');
-        const filterBtn = document.getElementById('filterBtn');
-        const filterModal = document.getElementById('filterModal');
-        const closeFilter = document.getElementById('closeFilter');
-        const searchInput = document.getElementById('searchInput');
-        
-        // Initialize
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Load user data from Telegram
-            const user = tg.initDataUnsafe?.user;
-            if (user) {
-                customerName.value = `${user.first_name} ${user.last_name || ''}`.trim();
-            }
-            
-            // Load data
-            await loadCategories();
-            await loadFoods();
-            updateCart();
-            renderCategories();
-            renderFoods();
-            
-            // Set up event listeners
-            setupEventListeners();
-        });
-        
-        // Load categories from API
-        async function loadCategories() {
-            try {
-                const initData = tg.initData;
-                const response = await fetch('https://uzbke-production.up.railway.app/api/categories', {
-                    headers: {
-                        'X-Telegram-Init-Data': initData
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Failed to load categories');
-                }
-                
-                categories = await response.json();
-            } catch (error) {
-                console.error('Error loading categories:', error);
-                // Fallback categories
-                categories = [
-                    { id: 'all', name: 'All', name_ru: 'Все', name_uz: 'Hammasi' },
-                    { id: 1, name: 'Lavash', name_ru: 'Лаваш', name_uz: 'Lavash' },
-                    { id: 2, name: 'Burger', name_ru: 'Бургер', name_uz: 'Burger' },
-                    { id: 3, name: 'Shaurma', name_ru: 'Шаурма', name_uz: 'Shaurma' },
-                    { id: 4, name: 'Hotdog', name_ru: 'Хотдог', name_uz: 'Hotdog' },
-                    { id: 5, name: 'Combo', name_ru: 'Комбо', name_uz: 'Combo' },
-                    { id: 6, name: 'Sneki', name_ru: 'Снеки', name_uz: 'Sneki' },
-                    { id: 7, name: 'Sous', name_ru: 'Соусы', name_uz: 'Sous' },
-                    { id: 8, name: 'Napitki', name_ru: 'Напитки', name_uz: 'Napitki' }
-                ];
-            }
-        }
-        
+        let allFoods = [];
+        let filteredFoods = [];
+        let cart = [];
+        let selectedCategory = 'all';
+        let sortBy = 'default';
+        let location = null;
+
+        // API Base URL
+        const API_BASE = 'https://uzbke-production.up.railway.app';
+
         // Load foods from API
         async function loadFoods() {
             try {
-                const initData = tg.initData;
-                const response = await fetch('https://uzbke-production.up.railway.app/api/foods', {
+                const response = await fetch(`${API_BASE}/api/foods`, {
                     headers: {
-                        'X-Telegram-Init-Data': initData
+                        'Authorization': tg.initData
                     }
                 });
                 
@@ -1013,538 +683,337 @@
                     throw new Error('Failed to load foods');
                 }
                 
-                foods = await response.json();
+                const data = await response.json();
+                allFoods = data.foods || [];
+                filterAndSort();
             } catch (error) {
                 console.error('Error loading foods:', error);
-                // Fallback foods
-                foods = [
-                    {
-                        id: 1,
-                        name: "Lavash Classic",
-                        name_ru: "Лаваш Классик",
-                        name_uz: "Lavash Klassik",
-                        description: "Tender lavash with chicken, fresh vegetables",
-                        price: 28000,
-                        rating: 4.8,
-                        is_new: true,
-                        image_url: null,
-                        category_id: 1
-                    },
-                    {
-                        id: 2,
-                        name: "Cheese Burger",
-                        name_ru: "Чизбургер",
-                        name_uz: "Cheese Burger",
-                        description: "Juicy beef burger with cheese",
-                        price: 32000,
-                        rating: 4.9,
-                        is_new: true,
-                        image_url: null,
-                        category_id: 2
-                    },
-                    {
-                        id: 3,
-                        name: "Shaurma Big",
-                        name_ru: "Шаурма Большая",
-                        name_uz: "Shaurma Katta",
-                        description: "Big shaurma with chicken and vegetables",
-                        price: 25000,
-                        rating: 4.7,
-                        is_new: false,
-                        image_url: null,
-                        category_id: 3
-                    }
-                ];
+                document.getElementById('foodGrid').innerHTML = '<div class="no-items">Ошибка загрузки. Попробуйте позже.</div>';
+            }
+        }
+
+        // Filter and sort foods
+        function filterAndSort() {
+            let foods = [...allFoods];
+            
+            // Filter by category
+            if (selectedCategory !== 'all') {
+                foods = foods.filter(f => f.category_name === selectedCategory);
             }
             
-            loader.style.display = 'none';
-        }
-        
-        // Render categories
-        function renderCategories() {
-            categoriesContainer.innerHTML = '';
-            
-            // Add "All" category
-            const allCategory = document.createElement('button');
-            allCategory.className = `category-btn ${currentCategory === 'all' ? 'active' : ''}`;
-            allCategory.textContent = 'All';
-            allCategory.dataset.id = 'all';
-            allCategory.addEventListener('click', () => {
-                currentCategory = 'all';
-                renderCategories();
-                renderFoods();
-            });
-            categoriesContainer.appendChild(allCategory);
-            
-            // Add other categories
-            categories.forEach(category => {
-                if (category.id !== 'all') {
-                    const categoryBtn = document.createElement('button');
-                    categoryBtn.className = `category-btn ${currentCategory === category.id ? 'active' : ''}`;
-                    categoryBtn.textContent = category.name;
-                    categoryBtn.dataset.id = category.id;
-                    categoryBtn.addEventListener('click', () => {
-                        currentCategory = category.id;
-                        renderCategories();
-                        renderFoods();
-                    });
-                    categoriesContainer.appendChild(categoryBtn);
-                }
-            });
-        }
-        
-        // Render foods
-        function renderFoods() {
-            foodGrid.innerHTML = '';
-            
-            // Filter foods by category
-            let filteredFoods = foods;
-            if (currentCategory !== 'all') {
-                filteredFoods = foods.filter(food => food.category_id == currentCategory);
-            }
-            
-            // Apply search filter
-            const searchTerm = searchInput.value.toLowerCase();
+            // Filter by search
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
             if (searchTerm) {
-                filteredFoods = filteredFoods.filter(food => 
-                    food.name.toLowerCase().includes(searchTerm) ||
-                    food.description.toLowerCase().includes(searchTerm)
+                foods = foods.filter(f => 
+                    f.name.toLowerCase().includes(searchTerm) || 
+                    (f.description && f.description.toLowerCase().includes(searchTerm))
                 );
             }
             
-            // Apply sort
-            filteredFoods.sort((a, b) => {
-                switch (currentSort) {
-                    case 'rating_desc':
-                        return b.rating - a.rating;
-                    case 'newest':
-                        return (b.is_new ? 1 : 0) - (a.is_new ? 1 : 0);
-                    case 'price_asc':
-                        return a.price - b.price;
-                    case 'price_desc':
-                        return b.price - a.price;
-                    default:
-                        return 0;
-                }
-            });
-            
-            // Show/hide empty state
-            if (filteredFoods.length === 0) {
-                emptyState.style.display = 'block';
-                foodGrid.style.display = 'none';
-                return;
-            } else {
-                emptyState.style.display = 'none';
-                foodGrid.style.display = 'grid';
+            // Sort
+            if (sortBy === 'rating') {
+                foods.sort((a, b) => b.rating - a.rating);
+            } else if (sortBy === 'new') {
+                foods.sort((a, b) => b.is_new - a.is_new);
+            } else if (sortBy === 'price-asc') {
+                foods.sort((a, b) => a.price - b.price);
+            } else if (sortBy === 'price-desc') {
+                foods.sort((a, b) => b.price - a.price);
             }
             
-            // Render food cards
-            filteredFoods.forEach(food => {
-                const cartItem = cart.find(item => item.food_id === food.id);
-                const quantity = cartItem ? cartItem.qty : 0;
-                
-                const foodCard = document.createElement('div');
-                foodCard.className = 'food-card';
-                foodCard.innerHTML = `
-                    ${food.image_url ? `<img src="${food.image_url}" class="food-image" alt="${food.name}">` : `<div class="food-image" style="display: flex; align-items: center; justify-content: center; color: var(--text-muted);"><i class="fas fa-utensils" style="font-size: 48px;"></i></div>`}
+            filteredFoods = foods;
+            renderFoods();
+        }
+
+        // Render foods
+        function renderFoods() {
+            const grid = document.getElementById('foodGrid');
+            
+            if (filteredFoods.length === 0) {
+                grid.innerHTML = '<div class="no-items">Ничего не найдено</div>';
+                return;
+            }
+            
+            grid.innerHTML = filteredFoods.map(food => `
+                <div class="food-card">
+                    <div class="food-image">
+                        ${food.image_url ? `<img src="${food.image_url}" alt="${food.name}">` : '🍽️'}
+                        ${food.is_new ? '<div class="new-badge">НОВОЕ</div>' : ''}
+                    </div>
                     <div class="food-info">
                         <div class="food-name">${food.name}</div>
-                        <div class="food-desc">${food.description || 'No description'}</div>
-                        <div class="food-footer">
-                            <div class="food-price">${formatPrice(food.price)}</div>
-                            ${quantity > 0 ? `
-                                <div style="display: flex; align-items: center; gap: 8px;">
-                                    <button class="quantity-btn minus" data-id="${food.id}">-</button>
-                                    <span class="cart-item-quantity">${quantity}</span>
-                                    <button class="quantity-btn plus" data-id="${food.id}">+</button>
-                                </div>
-                            ` : `
-                                <button class="add-btn" data-id="${food.id}">
-                                    <i class="fas fa-plus"></i>
-                                </button>
-                            `}
+                        <div class="food-desc">${food.description || ''}</div>
+                        <div class="food-bottom">
+                            <div class="food-price">${formatPrice(food.price)} сум</div>
+                            <div class="rating">⭐ ${food.rating}</div>
                         </div>
+                        <button class="add-btn" onclick="addToCart(${food.id}, '${food.name}', ${food.price})">Добавить</button>
                     </div>
-                `;
-                
-                foodGrid.appendChild(foodCard);
-            });
-            
-            // Add event listeners to buttons
-            document.querySelectorAll('.add-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const foodId = parseInt(e.currentTarget.dataset.id);
-                    addToCart(foodId);
-                });
-            });
-            
-            document.querySelectorAll('.quantity-btn.plus').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const foodId = parseInt(e.currentTarget.dataset.id);
-                    addToCart(foodId);
-                });
-            });
-            
-            document.querySelectorAll('.quantity-btn.minus').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const foodId = parseInt(e.currentTarget.dataset.id);
-                    removeFromCart(foodId);
-                });
-            });
+                </div>
+            `).join('');
         }
-        
-        // Cart functions
-        function addToCart(foodId) {
-            const food = foods.find(f => f.id === foodId);
-            if (!food) return;
+
+        // Format price
+        function formatPrice(price) {
+            return new Intl.NumberFormat('ru-RU').format(price);
+        }
+
+        // Add to cart
+        function addToCart(foodId, name, price) {
+            const existing = cart.find(item => item.food_id === foodId);
             
-            const existingItem = cart.find(item => item.food_id === foodId);
-            
-            if (existingItem) {
-                existingItem.qty += 1;
-                existingItem.line_total = existingItem.qty * existingItem.price;
+            if (existing) {
+                existing.qty++;
             } else {
-                cart.push({
-                    food_id: food.id,
-                    name: food.name,
-                    price: food.price,
-                    qty: 1,
-                    line_total: food.price
-                });
+                cart.push({ food_id: foodId, name, price, qty: 1 });
             }
             
             updateCart();
-            renderFoods();
-        }
-        
-        function removeFromCart(foodId, removeAll = false) {
-            const index = cart.findIndex(item => item.food_id === foodId);
             
-            if (index !== -1) {
-                if (removeAll || cart[index].qty === 1) {
-                    cart.splice(index, 1);
-                } else {
-                    cart[index].qty -= 1;
-                    cart[index].line_total = cart[index].qty * cart[index].price;
-                }
+            // Haptic feedback
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.impactOccurred('light');
             }
-            
-            updateCart();
-            renderFoods();
         }
-        
+
+        // Update cart UI
         function updateCart() {
-            // Save to localStorage
-            localStorage.setItem('cart', JSON.stringify(cart));
-            
-            // Update UI
             const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
-            const totalAmount = cart.reduce((sum, item) => sum + item.line_total, 0);
+            const totalPrice = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
             
-            cartCount.textContent = totalItems;
-            cartTotal.textContent = formatPrice(totalAmount);
-            cartTotalAmount.textContent = formatPrice(totalAmount);
+            const cartFloat = document.getElementById('cartFloat');
+            const cartCount = document.getElementById('cartCount');
+            const cartTotal = document.getElementById('cartTotal');
             
-            // Update checkout button
-            checkoutBtn.disabled = totalAmount < 50000;
-            
-            // Render cart items
-            cartItems.innerHTML = '';
+            if (totalItems > 0) {
+                cartFloat.classList.remove('hidden');
+                cartCount.textContent = totalItems;
+                cartTotal.textContent = formatPrice(totalPrice) + ' сум';
+            } else {
+                cartFloat.classList.add('hidden');
+            }
+        }
+
+        // Show cart modal
+        function showCart() {
+            const modal = document.getElementById('cartModal');
+            const itemsList = document.getElementById('cartItemsList');
+            const totalBlock = document.getElementById('totalBlock');
             
             if (cart.length === 0) {
-                cartItems.innerHTML = '<div class="empty-state" style="padding: 20px 0;"><i class="fas fa-shopping-cart"></i><p>Your cart is empty</p></div>';
+                itemsList.innerHTML = '<div class="empty-cart"><div class="empty-cart-icon">🛒</div><div>Корзина пуста</div></div>';
+                totalBlock.innerHTML = '';
+                document.getElementById('proceedCheckout').style.display = 'none';
+                modal.classList.add('active');
                 return;
             }
             
-            cart.forEach(item => {
-                const cartItem = document.createElement('div');
-                cartItem.className = 'cart-item';
-                cartItem.innerHTML = `
+            itemsList.innerHTML = cart.map((item, index) => `
+                <div class="cart-item">
                     <div class="cart-item-info">
                         <div class="cart-item-name">${item.name}</div>
-                        <div class="cart-item-price">${formatPrice(item.price)} each</div>
+                        <div class="cart-item-price">${formatPrice(item.price)} сум × ${item.qty}</div>
                     </div>
                     <div class="cart-item-controls">
-                        <button class="quantity-btn minus" data-id="${item.food_id}">-</button>
-                        <span class="cart-item-quantity">${item.qty}</span>
-                        <button class="quantity-btn plus" data-id="${item.food_id}">+</button>
-                        <button class="remove-item" data-id="${item.food_id}">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <button class="qty-btn" onclick="changeQty(${index}, -1)">−</button>
+                        <div class="qty-value">${item.qty}</div>
+                        <button class="qty-btn" onclick="changeQty(${index}, 1)">+</button>
                     </div>
-                `;
-                cartItems.appendChild(cartItem);
-            });
+                </div>
+            `).join('');
             
-            // Add event listeners to cart buttons
-            document.querySelectorAll('.cart-item .quantity-btn.plus').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const foodId = parseInt(e.currentTarget.dataset.id);
-                    addToCart(foodId);
-                });
-            });
+            const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
             
-            document.querySelectorAll('.cart-item .quantity-btn.minus').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const foodId = parseInt(e.currentTarget.dataset.id);
-                    removeFromCart(foodId);
-                });
-            });
+            totalBlock.innerHTML = `
+                <div class="total-row">
+                    <div class="total-label">Итого:</div>
+                    <div class="total-value total-final">${formatPrice(total)} сум</div>
+                </div>
+            `;
             
-            document.querySelectorAll('.cart-item .remove-item').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const foodId = parseInt(e.currentTarget.dataset.id);
-                    removeFromCart(foodId, true);
-                });
-            });
+            document.getElementById('proceedCheckout').style.display = total >= 50000 ? 'block' : 'none';
+            
+            if (total < 50000) {
+                totalBlock.innerHTML += '<div class="error-msg">Минимальная сумма заказа: 50,000 сум</div>';
+            }
+            
+            modal.classList.add('active');
         }
-        
-        // Checkout functions
-        function updateCheckoutSummary() {
-            const subtotal = cart.reduce((sum, item) => sum + item.line_total, 0);
-            let discount = 0;
-            let total = subtotal;
+
+        // Change quantity
+        function changeQty(index, delta) {
+            cart[index].qty += delta;
             
-            if (appliedPromo && appliedPromo.valid) {
-                discount = appliedPromo.discount_amount;
-                total = appliedPromo.final_total;
+            if (cart[index].qty <= 0) {
+                cart.splice(index, 1);
             }
             
-            summarySubtotal.textContent = formatPrice(subtotal);
-            summaryTotal.textContent = formatPrice(total);
-            
-            if (discount > 0) {
-                discountRow.style.display = 'flex';
-                summaryDiscount.textContent = `-${formatPrice(discount)}`;
-            } else {
-                discountRow.style.display = 'none';
-            }
-        }
-        
-        async function validatePromoCode() {
-            const code = promoCode.value.trim();
-            if (!code) {
-                promoMessage.textContent = 'Please enter a promo code';
-                promoMessage.style.color = 'var(--error-color)';
-                appliedPromo = null;
-                updateCheckoutSummary();
-                return;
-            }
-            
-            const subtotal = cart.reduce((sum, item) => sum + item.line_total, 0);
-            
-            try {
-                const initData = tg.initData;
-                const response = await fetch('https://uzbke-production.up.railway.app/api/promo/validate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Telegram-Init-Data': initData
-                    },
-                    body: JSON.stringify({
-                        code: code,
-                        total_amount: subtotal
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Failed to validate promo');
-                }
-                
-                const result = await response.json();
-                appliedPromo = result;
-                
-                if (result.valid) {
-                    promoMessage.textContent = result.message;
-                    promoMessage.style.color = 'var(--success-color)';
-                } else {
-                    promoMessage.textContent = result.message;
-                    promoMessage.style.color = 'var(--error-color)';
-                }
-                
-                updateCheckoutSummary();
-            } catch (error) {
-                console.error('Error validating promo:', error);
-                promoMessage.textContent = 'Error validating promo code';
-                promoMessage.style.color = 'var(--error-color)';
-                appliedPromo = null;
-                updateCheckoutSummary();
-            }
-        }
-        
-        async function submitOrder() {
-            // Validate form
-            if (!customerName.value.trim()) {
-                alert('Please enter your name');
-                return;
-            }
-            
-            if (!customerPhone.value.trim()) {
-                alert('Please enter your phone number');
-                return;
-            }
-            
-            if (!locationLat.value || !locationLng.value) {
-                alert('Please get your location');
-                return;
-            }
-            
-            const subtotal = cart.reduce((sum, item) => sum + item.line_total, 0);
-            const discount = appliedPromo ? appliedPromo.discount_amount : 0;
-            const total = appliedPromo ? appliedPromo.final_total : subtotal;
-            
-            // Prepare order data
-            const orderData = {
-                type: "order_create",
-                items: cart.map(item => ({
-                    food_id: item.food_id,
-                    name: item.name,
-                    price: item.price,
-                    qty: item.qty
-                })),
-                total: subtotal,
-                customer_name: customerName.value.trim(),
-                phone: customerPhone.value.trim(),
-                comment: customerComment.value.trim(),
-                location: {
-                    lat: parseFloat(locationLat.value),
-                    lng: parseFloat(locationLng.value)
-                },
-                promo_code: appliedPromo ? promoCode.value.trim() : null,
-                created_at_client: new Date().toISOString()
-            };
-            
-            // Send to Telegram bot
-            tg.sendData(JSON.stringify(orderData));
-            
-            // Clear cart
-            cart = [];
             updateCart();
-            localStorage.removeItem('cart');
-            
-            // Close modal and WebApp
-            checkoutModal.classList.remove('show');
-            setTimeout(() => {
-                tg.close();
-            }, 1000);
+            showCart();
         }
-        
-        // Location functions
-        function getLocation() {
-            if (!navigator.geolocation) {
-                locationStatus.textContent = 'Geolocation is not supported by your browser';
-                locationStatus.style.color = 'var(--error-color)';
-                return;
+
+        // Show checkout
+        function showCheckout() {
+            document.getElementById('cartModal').classList.remove('active');
+            document.getElementById('checkoutModal').classList.add('active');
+            
+            // Pre-fill user data
+            if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                document.getElementById('customerName').value = tg.initDataUnsafe.user.first_name + ' ' + (tg.initDataUnsafe.user.last_name || '');
             }
             
-            locationStatus.textContent = 'Getting location...';
-            locationStatus.style.color = 'var(--warning-color)';
+            // Update checkout total
+            const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            document.getElementById('checkoutTotal').innerHTML = `
+                <div class="total-row">
+                    <div class="total-label">Итого к оплате:</div>
+                    <div class="total-value total-final">${formatPrice(total)} сум</div>
+                </div>
+            `;
+        }
+
+        // Get geolocation
+        document.getElementById('geoBtn').addEventListener('click', function() {
+            const btn = this;
+            const geoText = document.getElementById('geoText');
+            const geoError = document.getElementById('geoError');
+            
+            geoError.textContent = '';
+            geoText.textContent = 'Получение локации...';
+            
+            if (!navigator.geolocation) {
+                geoError.textContent = 'Геолокация не поддерживается';
+                geoText.textContent = 'Определить локацию';
+                return;
+            }
             
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    
-                    locationLat.value = lat;
-                    locationLng.value = lng;
-                    
-                    locationStatus.textContent = `Location set: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-                    locationStatus.style.color = 'var(--success-color)';
-                    currentLocation = { lat, lng };
+                    location = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    geoText.textContent = '✅ Локация получена';
+                    btn.classList.add('active');
+                    document.getElementById('submitOrder').disabled = false;
                 },
                 (error) => {
-                    console.error('Error getting location:', error);
-                    locationStatus.textContent = 'Unable to get your location. Please try again.';
-                    locationStatus.style.color = 'var(--error-color)';
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
+                    console.error('Geo error:', error);
+                    geoError.textContent = 'Не удалось получить локацию. Проверьте разрешения.';
+                    geoText.textContent = 'Попробовать снова';
                 }
             );
-        }
-        
-        // Event Listeners
-        function setupEventListeners() {
-            // Cart floating button
-            cartFloating.addEventListener('click', () => {
-                cartContainer.classList.add('show');
-            });
+        });
+
+        // Phone mask
+        document.getElementById('customerPhone').addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
             
-            closeCart.addEventListener('click', () => {
-                cartContainer.classList.remove('show');
-            });
+            if (!value.startsWith('998')) {
+                value = '998' + value;
+            }
             
-            // Checkout button
-            checkoutBtn.addEventListener('click', () => {
-                if (cart.reduce((sum, item) => sum + item.line_total, 0) < 50000) {
-                    alert('Minimum order amount is 50,000 UZS');
-                    return;
+            value = value.substring(0, 12);
+            
+            let formatted = '+998';
+            if (value.length > 3) formatted += ' ' + value.substring(3, 5);
+            if (value.length > 5) formatted += ' ' + value.substring(5, 8);
+            if (value.length > 8) formatted += ' ' + value.substring(8, 10);
+            if (value.length > 10) formatted += ' ' + value.substring(10, 12);
+            
+            e.target.value = formatted;
+        });
+
+        // Submit order
+        document.getElementById('checkoutForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            if (!location) {
+                document.getElementById('geoError').textContent = 'Локация обязательна!';
+                return;
+            }
+            
+            const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            
+            if (total < 50000) {
+                alert('Минимальная сумма заказа: 50,000 сум');
+                return;
+            }
+            
+            const orderData = {
+                type: 'order_create',
+                items: cart,
+                total: total,
+                customer_name: document.getElementById('customerName').value,
+                phone: document.getElementById('customerPhone').value,
+                comment: document.getElementById('orderComment').value,
+                location: location,
+                created_at_client: new Date().toISOString()
+            };
+            
+            // Send to bot
+            tg.sendData(JSON.stringify(orderData));
+        });
+
+        // Category filter
+        document.querySelectorAll('.category-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                selectedCategory = this.dataset.category;
+                filterAndSort();
+            });
+        });
+
+        // Search
+        document.getElementById('searchInput').addEventListener('input', filterAndSort);
+
+        // Filter button
+        document.getElementById('filterBtn').addEventListener('click', () => {
+            document.getElementById('filterModal').classList.add('active');
+        });
+
+        // Sort options
+        document.querySelectorAll('.filter-option').forEach(opt => {
+            opt.addEventListener('click', function() {
+                document.querySelectorAll('.filter-option').forEach(o => o.classList.remove('active'));
+                this.classList.add('active');
+                sortBy = this.dataset.sort;
+                filterAndSort();
+                document.getElementById('filterModal').classList.remove('active');
+            });
+        });
+
+        // Cart float click
+        document.getElementById('cartFloat').addEventListener('click', showCart);
+
+        // Proceed to checkout
+        document.getElementById('proceedCheckout').addEventListener('click', showCheckout);
+
+        // Close modals
+        document.getElementById('closeCart').addEventListener('click', () => {
+            document.getElementById('cartModal').classList.remove('active');
+        });
+
+        document.getElementById('closeCheckout').addEventListener('click', () => {
+            document.getElementById('checkoutModal').classList.remove('active');
+        });
+
+        document.getElementById('closeFilter').addEventListener('click', () => {
+            document.getElementById('filterModal').classList.remove('active');
+        });
+
+        // Close modal on outside click
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    this.classList.remove('active');
                 }
-                
-                updateCheckoutSummary();
-                checkoutModal.classList.add('show');
             });
-            
-            closeCheckout.addEventListener('click', () => {
-                checkoutModal.classList.remove('show');
-            });
-            
-            // Get location button
-            getLocationBtn.addEventListener('click', getLocation);
-            
-            // Apply promo button
-            applyPromoBtn.addEventListener('click', validatePromoCode);
-            
-            promoCode.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    validatePromoCode();
-                }
-            });
-            
-            // Submit order button
-            submitOrderBtn.addEventListener('click', submitOrder);
-            
-            // Filter button
-            filterBtn.addEventListener('click', () => {
-                filterModal.classList.add('show');
-            });
-            
-            closeFilter.addEventListener('click', () => {
-                filterModal.classList.remove('show');
-            });
-            
-            // Filter options
-            document.querySelectorAll('.filter-option').forEach(option => {
-                option.addEventListener('click', (e) => {
-                    currentSort = e.currentTarget.dataset.sort;
-                    
-                    // Update active state
-                    document.querySelectorAll('.filter-option').forEach(opt => {
-                        opt.classList.remove('active');
-                    });
-                    e.currentTarget.classList.add('active');
-                    
-                    // Render foods and close modal
-                    renderFoods();
-                    filterModal.classList.remove('show');
-                });
-            });
-            
-            // Search input
-            searchInput.addEventListener('input', () => {
-                renderFoods();
-            });
-        }
-        
-        // Utility functions
-        function formatPrice(price) {
-            return new Intl.NumberFormat('ru-RU', {
-                minimumFractionDigits: 0,
-                maximumFractionDigits: 0
-            }).format(price) + ' сум';
-        }
+        });
+
+        // Initialize
+        loadFoods();
     </script>
 </body>
 </html>
