@@ -1,1890 +1,1454 @@
-#!/usr/bin/env python3
-"""
-Telegram Food Delivery Bot - FIESTA
-To'liq ishlaydigan versiya
-"""
-
 import asyncio
 import json
+import hmac
+import hashlib
 import logging
 import os
-import random
+import re
+import secrets
 import string
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-from decimal import Decimal
-from zoneinfo import ZoneInfo
-
-import redis.asyncio as redis
-from sqlalchemy import select, update, func, and_, or_, BigInteger
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
+from enum import Enum
+from typing import Optional, List, Dict, Any, Tuple
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup,
-    InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup,
-    KeyboardButton, ReplyKeyboardRemove, MenuButtonWebApp,
-    WebAppData, InputFile
-)
 from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    WebAppInfo,
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramBadRequest
 
-import aiohttp
-from pydantic import BaseModel
-from dotenv import load_dotenv
+from sqlalchemy import (
+    String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text,
+    Numeric, select, func, update, UniqueConstraint
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-# Load environment variables
-load_dotenv()
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+import uvicorn
 
-# Config
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7917271389:AAE4PXCowGo6Bsfdy3Hrz3x689MLJdQmVi4")
-ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "6365371142").split(",")]
-DB_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:BDAaILJKOITNLlMOjJNfWiRPbICwEcpZ@centerbeam.proxy.rlwy.net:35489/railway")
-REDIS_URL = os.getenv("REDIS_URL", "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRtRRJp@ballast.proxy.rlwy.net:35411")
-SHOP_CHANNEL_ID = int(os.getenv("SHOP_CHANNEL_ID", "-1003530497437"))
-COURIER_CHANNEL_ID = int(os.getenv("COURIER_CHANNEL_ID", "-1003707946746"))
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mainsufooduz.netlify.app")
-BACKEND_API_URL = os.getenv("BACKEND_API_URL", "https://uzbke-production.up.railway.app/api")
-TIMEZONE = ZoneInfo("Asia/Tashkent")
+# =========================================================
+# CONFIG
+# =========================================================
 
-# Setup logging
+@dataclass(frozen=True)
+class Config:
+    BOT_TOKEN: str
+    ADMIN_IDS: List[int]
+    DB_URL: str
+    REDIS_URL: str
+    SHOP_CHANNEL_ID: Optional[int]
+    COURIER_CHANNEL_ID: Optional[int]
+    WEBAPP_URL: str
+    API_PUBLIC_BASE: str  # e.g. https://uzbke-production.up.railway.app
+
+def parse_admin_ids(raw: str) -> List[int]:
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r"[,\s]+", raw)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if p:
+            out.append(int(p))
+    return out
+
+def load_config() -> Config:
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    if not bot_token:
+        raise RuntimeError("BOT_TOKEN is required")
+
+    admin_ids = parse_admin_ids(os.getenv("ADMIN_IDS", "").strip())
+    if not admin_ids:
+        raise RuntimeError("ADMIN_IDS is required (comma/space separated)")
+
+    db_url = os.getenv("DB_URL", "").strip()
+    if not db_url:
+        raise RuntimeError("DB_URL is required")
+
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if not redis_url:
+        raise RuntimeError("REDIS_URL is required")
+
+    shop_channel_id = os.getenv("SHOP_CHANNEL_ID", "").strip()
+    courier_channel_id = os.getenv("COURIER_CHANNEL_ID", "").strip()
+
+    webapp_url = os.getenv("WEBAPP_URL", "").strip()
+    if not webapp_url:
+        raise RuntimeError("WEBAPP_URL is required")
+
+    api_public_base = os.getenv("API_PUBLIC_BASE", "").strip()
+    if not api_public_base:
+        # fallback: if you host same process, can be blank, but WebApp needs it
+        api_public_base = ""
+
+    return Config(
+        BOT_TOKEN=bot_token,
+        ADMIN_IDS=admin_ids,
+        DB_URL=db_url,
+        REDIS_URL=redis_url,
+        SHOP_CHANNEL_ID=int(shop_channel_id) if shop_channel_id else None,
+        COURIER_CHANNEL_ID=int(courier_channel_id) if courier_channel_id else None,
+        WEBAPP_URL=webapp_url,
+        API_PUBLIC_BASE=api_public_base,
+    )
+
+CONFIG = load_config()
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("bot.log", encoding="utf-8")
-    ]
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("fiesta")
 
-# Bot va Dispatcher
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-redis_client = redis.from_url(REDIS_URL)
-storage = RedisStorage(redis=redis_client)
-dp = Dispatcher(storage=storage)
+TZ_TASHKENT = timezone(timedelta(hours=5))
 
-# Routerlar
-client_router = Router()
-admin_router = Router()
-courier_router = Router()
+# =========================================================
+# DB
+# =========================================================
 
-# FSM holatlar
-class AdminFoodStates(StatesGroup):
-    waiting_for_name = State()
-    waiting_for_category = State()
-    waiting_for_price = State()
-    waiting_for_description = State()
+class Base(DeclarativeBase):
+    pass
 
-class AdminPromoStates(StatesGroup):
-    waiting_for_code = State()
-    waiting_for_discount = State()
-    waiting_for_limit = State()
-    waiting_for_expiry = State()
+class OrderStatus(str, Enum):
+    NEW = "NEW"
+    CONFIRMED = "CONFIRMED"
+    COOKING = "COOKING"
+    COURIER_ASSIGNED = "COURIER_ASSIGNED"
+    OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY"
+    DELIVERED = "DELIVERED"
+    CANCELED = "CANCELED"
 
-class AdminCategoryStates(StatesGroup):
-    waiting_for_name = State()
+STATUS_LABELS = {
+    OrderStatus.NEW: "Принят",
+    OrderStatus.CONFIRMED: "Подтвержден",
+    OrderStatus.COOKING: "Готовится",
+    OrderStatus.COURIER_ASSIGNED: "Курьер назначен",
+    OrderStatus.OUT_FOR_DELIVERY: "Передан курьеру",
+    OrderStatus.DELIVERED: "Доставлен",
+    OrderStatus.CANCELED: "Отменен",
+}
 
-class AdminCourierStates(StatesGroup):
-    waiting_for_chat_id = State()
-    waiting_for_name = State()
-
-# Database setup
-Base = declarative_base()
-
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, DECIMAL, BigInteger as SA_BigInteger
+class Setting(Base):
+    __tablename__ = "settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
 
 class User(Base):
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True)
-    tg_id = Column(SA_BigInteger, unique=True, nullable=False)
-    username = Column(String(100))
-    full_name = Column(String(200), nullable=False)
-    joined_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE))
-    ref_by_user_id = Column(SA_BigInteger, nullable=True)
-    phone = Column(String(20), nullable=True)
-    
-    def __repr__(self):
-        return f"<User(id={self.id}, username={self.username}, tg_id={self.tg_id})>"
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    full_name: Mapped[str] = mapped_column(String(128))
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    ref_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    referral_promo_issued: Mapped[bool] = mapped_column(Boolean, default=False)
 
 class Category(Base):
-    __tablename__ = 'categories'
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE))
-    
-    foods = relationship("Food", back_populates="category")
-    
-    def __repr__(self):
-        return f"<Category(id={self.id}, name={self.name})>"
+    __tablename__ = "categories"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 class Food(Base):
-    __tablename__ = 'foods'
-    id = Column(Integer, primary_key=True)
-    category_id = Column(Integer, ForeignKey('categories.id'), nullable=False)
-    name = Column(String(200), nullable=False)
-    description = Column(Text)
-    price = Column(DECIMAL(10, 2), nullable=False)
-    rating = Column(Float, default=4.5)
-    is_new = Column(Boolean, default=True)
-    is_active = Column(Boolean, default=True)
-    image_url = Column(String(500))
-    created_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE))
-    
-    category = relationship("Category", back_populates="foods")
-    
-    def __repr__(self):
-        return f"<Food(id={self.id}, name={self.name}, price={self.price})>"
-
-class Order(Base):
-    __tablename__ = 'orders'
-    id = Column(Integer, primary_key=True)
-    order_number = Column(String(50), unique=True, nullable=False)
-    user_id = Column(SA_BigInteger, nullable=False)
-    customer_name = Column(String(200), nullable=False)
-    phone = Column(String(50), nullable=False)
-    comment = Column(Text)
-    total = Column(DECIMAL(10, 2), nullable=False)
-    status = Column(String(50), default='NEW')
-    created_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE))
-    updated_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE))
-    delivered_at = Column(DateTime)
-    location_lat = Column(Float)
-    location_lng = Column(Float)
-    courier_id = Column(Integer, ForeignKey('couriers.id'), nullable=True)
-    
-    courier = relationship("Courier")
-    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
-    
-    def __repr__(self):
-        return f"<Order(id={self.id}, number={self.order_number}, status={self.status})>"
-
-class OrderItem(Base):
-    __tablename__ = 'order_items'
-    id = Column(Integer, primary_key=True)
-    order_id = Column(Integer, ForeignKey('orders.id'), nullable=False)
-    food_id = Column(Integer, ForeignKey('foods.id'), nullable=False)
-    name_snapshot = Column(String(200), nullable=False)
-    price_snapshot = Column(DECIMAL(10, 2), nullable=False)
-    qty = Column(Integer, nullable=False)
-    line_total = Column(DECIMAL(10, 2), nullable=False)
-    
-    order = relationship("Order", back_populates="items")
-    food = relationship("Food")
-    
-    def __repr__(self):
-        return f"<OrderItem(id={self.id}, food={self.name_snapshot}, qty={self.qty})>"
-
-class Promo(Base):
-    __tablename__ = 'promos'
-    id = Column(Integer, primary_key=True)
-    code = Column(String(50), unique=True, nullable=False)
-    discount_percent = Column(Integer, nullable=False)
-    expires_at = Column(DateTime)
-    usage_limit = Column(Integer, default=100)
-    used_count = Column(Integer, default=0)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE))
-    
-    def __repr__(self):
-        return f"<Promo(id={self.id}, code={self.code}, discount={self.discount_percent}%)>"
+    __tablename__ = "foods"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"))
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(String(255), default="")
+    price: Mapped[int] = mapped_column(Integer)  # sum
+    rating: Mapped[int] = mapped_column(Integer, default=5)
+    is_new: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class Courier(Base):
-    __tablename__ = 'couriers'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(SA_BigInteger, unique=True, nullable=False)
-    name = Column(String(200), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(TIMEZONE))
-    
-    orders = relationship("Order", back_populates="courier")
-    
-    def __repr__(self):
-        return f"<Courier(id={self.id}, name={self.name}, chat_id={self.chat_id})>"
+    __tablename__ = "couriers"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-class ReferralStat(Base):
-    __tablename__ = 'referral_stats'
-    id = Column(Integer, primary_key=True)
-    user_id = Column(SA_BigInteger, nullable=False, unique=True)
-    ref_count = Column(Integer, default=0)
-    orders_count = Column(Integer, default=0)
-    delivered_count = Column(Integer, default=0)
-    last_updated = Column(DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE))
-    
-    def __repr__(self):
-        return f"<ReferralStat(user_id={self.user_id}, ref_count={self.ref_count})>"
+class Promo(Base):
+    __tablename__ = "promos"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer)  # 1..90
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    usage_limit: Mapped[int] = mapped_column(Integer, default=0)  # 0 unlimited
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-# Database session
-engine = create_async_engine(DB_URL, echo=True)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+class Order(Base):
+    __tablename__ = "orders"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_number: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    customer_name: Mapped[str] = mapped_column(String(128))
+    phone: Mapped[str] = mapped_column(String(32))
+    comment: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    total: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default=OrderStatus.NEW.value)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    location_lat: Mapped[float] = mapped_column(Numeric(10, 6))
+    location_lng: Mapped[float] = mapped_column(Numeric(10, 6))
+    courier_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("couriers.id"), nullable=True)
 
-async def get_session() -> AsyncSession:
-    async with AsyncSessionLocal() as session:
-        yield session
+    admin_channel_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    courier_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-async def init_db():
+class OrderItem(Base):
+    __tablename__ = "order_items"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"))
+    food_id: Mapped[int] = mapped_column(Integer, ForeignKey("foods.id"))
+    name_snapshot: Mapped[str] = mapped_column(String(128))
+    price_snapshot: Mapped[int] = mapped_column(Integer)
+    qty: Mapped[int] = mapped_column(Integer)
+    line_total: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (UniqueConstraint("order_id", "food_id", name="uq_order_food"),)
+
+engine = create_async_engine(CONFIG.DB_URL, echo=False, pool_pre_ping=True)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+async def db_init():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
-    # Demo ma'lumotlar
-    async with AsyncSessionLocal() as session:
-        # Demo kategoriyalar
-        categories_count = await session.execute(select(func.count(Category.id)))
-        if categories_count.scalar() == 0:
-            demo_categories = [
-                Category(name="Лаваш", is_active=True),
-                Category(name="Бургер", is_active=True),
-                Category(name="Хагги", is_active=True),
-                Category(name="Шаурма", is_active=True),
-                Category(name="Хот-дог", is_active=True),
-                Category(name="Комбо", is_active=True),
-                Category(name="Снеки", is_active=True),
-                Category(name="Соусы", is_active=True),
-                Category(name="Напитки", is_active=True),
-            ]
-            session.add_all(demo_categories)
-            await session.commit()
-            
-            # Demo ovqatlar
-            categories = await session.execute(select(Category))
-            all_categories = categories.scalars().all()
-            
-            demo_foods = []
-            for cat in all_categories:
-                if cat.name == "Лаваш":
-                    demo_foods.extend([
-                        Food(category_id=cat.id, name="Лаваш говяжий", description="Свежий лаваш с говядиной, овощами и соусом", price=28000, rating=4.8, is_new=True),
-                        Food(category_id=cat.id, name="Лаваш куриный", description="Лаваш с куриным мясом, свежими овощами", price=26000, rating=4.7),
-                        Food(category_id=cat.id, name="Лаваш сырный", description="Лаваш с сыром и курицей", price=30000, rating=4.9, is_new=True),
-                    ])
-                elif cat.name == "Бургер":
-                    demo_foods.extend([
-                        Food(category_id=cat.id, name="Бургер чизбургер", description="Аппетитный бургер с сыром и говяжьей котлетой", price=32000, rating=4.9, is_new=True),
-                        Food(category_id=cat.id, name="Бургер гриль", description="Бургер с грилем и овощами", price=35000, rating=4.8),
-                    ])
-                elif cat.name == "Напитки":
-                    demo_foods.extend([
-                        Food(category_id=cat.id, name="Кока-Кола", description="Охлажденная Coca-Cola 0.5л", price=8000, rating=4.3),
-                        Food(category_id=cat.id, name="Фанта", description="Фанта 0.5л", price=8000, rating=4.2),
-                        Food(category_id=cat.id, name="Сок Rich", description="Сок Rich 1л", price=12000, rating=4.5),
-                    ])
-                else:
-                    demo_foods.append(
-                        Food(category_id=cat.id, name=f"Demo {cat.name}", description=f"Вкусный {cat.name.lower()} от FIESTA", price=20000, rating=4.0)
-                    )
-            
-            session.add_all(demo_foods)
-            await session.commit()
-        
-        # Admin uchun demo kuryer
-        couriers_count = await session.execute(select(func.count(Courier.id)))
-        if couriers_count.scalar() == 0:
-            demo_courier = Courier(
-                chat_id=ADMIN_IDS[0] if ADMIN_IDS else 6365371142,
-                name="Admin Courier",
-                is_active=True
-            )
-            session.add(demo_courier)
-            await session.commit()
-        
-        logger.info("Database initialized successfully")
+    async with SessionLocal() as s:
+        await ensure_seed_data(s)
 
-# Utility funksiyalar
-def format_price(price):
-    """Narxlarni formatlash"""
-    if isinstance(price, Decimal):
-        return f"{price:,.0f}".replace(",", " ")
-    return f"{int(price):,}".replace(",", " ")
+async def ensure_seed_data(s: AsyncSession):
+    # Settings: allow runtime override
+    await upsert_setting(s, "SHOP_CHANNEL_ID", str(CONFIG.SHOP_CHANNEL_ID or ""))
+    await upsert_setting(s, "COURIER_CHANNEL_ID", str(CONFIG.COURIER_CHANNEL_ID or ""))
 
-def generate_order_number():
-    """Buyurtma raqamini yaratish"""
-    date_str = datetime.now(TIMEZONE).strftime("%Y%m%d")
-    random_str = ''.join(random.choices(string.digits, k=6))
-    return f"ORD-{date_str}-{random_str}"
+    # Seed categories + 3 foods each if empty
+    count = (await s.execute(select(func.count(Category.id)))).scalar_one()
+    if count and count > 0:
+        return
 
-async def get_or_create_user(tg_id: int, username: str, full_name: str, ref_by: int = None) -> User:
-    """Foydalanuvchini olish yoki yaratish"""
-    async with AsyncSessionLocal() as session:
-        try:
-            result = await session.execute(
-                select(User).where(User.tg_id == tg_id)
-            )
-            user = result.scalar_one_or_none()
-            
-            if not user:
-                user = User(
-                    tg_id=tg_id,
-                    username=username,
-                    full_name=full_name,
-                    ref_by_user_id=ref_by
-                )
-                session.add(user)
-                await session.commit()
-                await session.refresh(user)
-                
-                # Referral stat yaratish
-                ref_stat = ReferralStat(user_id=tg_id)
-                session.add(ref_stat)
-                await session.commit()
-                
-                # Agar referral orqali kelgan bo'lsa
-                if ref_by:
-                    # Referral statistikani yangilash
-                    ref_result = await session.execute(
-                        select(ReferralStat).where(ReferralStat.user_id == ref_by)
-                    )
-                    ref_stat = ref_result.scalar_one_or_none()
-                    if ref_stat:
-                        ref_stat.ref_count += 1
-                        await session.commit()
-            
-            return user
-        except Exception as e:
-            logger.error(f"Error in get_or_create_user: {e}")
-            await session.rollback()
-            raise
+    cat_names = ["All", "Lavash", "Burger", "Xaggi", "Shaurma", "Hotdog", "Combo", "Sneki", "Sous", "Napitki"]
+    cat_ids: Dict[str, int] = {}
+    for name in cat_names:
+        c = Category(name=name, is_active=True)
+        s.add(c)
+        await s.flush()
+        cat_ids[name] = c.id
 
-async def get_user_by_tg_id(tg_id: int) -> Optional[User]:
-    """Telegram ID bo'yicha foydalanuvchini olish"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.tg_id == tg_id)
-        )
-        return result.scalar_one_or_none()
-
-async def update_referral_stats(user_tg_id: int, order_delivered: bool = False):
-    """Referral statistikani yangilash"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(ReferralStat).where(ReferralStat.user_id == user_tg_id)
-        )
-        stat = result.scalar_one_or_none()
-        
-        if stat:
-            stat.orders_count += 1
-            if order_delivered:
-                stat.delivered_count += 1
-            await session.commit()
-
-# Keyboardlar
-def get_client_main_keyboard():
-    """Asosiy klaviatura"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=WEBAPP_URL))],
-            [KeyboardButton(text="📦 Мои заказы"), KeyboardButton(text="ℹ️ Информация о нас")],
-            [KeyboardButton(text="👥 Пригласить друга"), KeyboardButton(text="📞 Контакты")]
+    demo_foods = {
+        "Lavash": [
+            ("Lavash Classic", "Классический лаваш", 45000, 5, True),
+            ("Lavash Cheese", "С сыром", 52000, 5, False),
+            ("Lavash Spicy", "Острый", 49000, 4, False),
         ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    return keyboard
+        "Burger": [
+            ("Burger Beef", "Говядина", 55000, 5, True),
+            ("Burger Chicken", "Курица", 48000, 4, False),
+            ("Burger Double", "Двойной", 69000, 5, False),
+        ],
+        "Xaggi": [
+            ("Xaggi Original", "Фирменный", 60000, 5, True),
+            ("Xaggi Mini", "Мини", 42000, 4, False),
+            ("Xaggi XL", "Большой", 78000, 5, False),
+        ],
+        "Shaurma": [
+            ("Shaurma Classic", "Классика", 45000, 4, True),
+            ("Shaurma Cheese", "С сыром", 52000, 5, False),
+            ("Shaurma Spicy", "Острая", 49000, 4, False),
+        ],
+        "Hotdog": [
+            ("Hotdog Classic", "Классический", 30000, 4, True),
+            ("Hotdog Cheese", "С сыром", 35000, 4, False),
+            ("Hotdog Double", "Двойной", 42000, 5, False),
+        ],
+        "Combo": [
+            ("Combo #1", "Бургер + фри + кола", 85000, 5, True),
+            ("Combo #2", "Лаваш + фри + чай", 78000, 4, False),
+            ("Combo #3", "Шаурма + напиток", 69000, 4, False),
+        ],
+        "Sneki": [
+            ("Fries", "Картофель фри", 25000, 4, True),
+            ("Nuggets", "Наггетсы", 32000, 4, False),
+            ("Onion Rings", "Луковые кольца", 28000, 4, False),
+        ],
+        "Sous": [
+            ("Ketchup", "Кетчуп", 5000, 4, True),
+            ("Cheese Sauce", "Сырный соус", 7000, 5, False),
+            ("Garlic Sauce", "Чесночный", 7000, 4, False),
+        ],
+        "Napitki": [
+            ("Cola 0.5", "0.5л", 12000, 4, True),
+            ("Fanta 0.5", "0.5л", 12000, 4, False),
+            ("Tea", "Черный чай", 8000, 4, False),
+        ],
+    }
 
-def get_admin_main_keyboard():
-    """Admin asosiy klaviatura"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🍔 Taomlar", callback_data="admin:foods")],
-            [InlineKeyboardButton(text="📂 Kategoriyalar", callback_data="admin:categories")],
-            [InlineKeyboardButton(text="🎁 Promokodlar", callback_data="admin:promos")],
-            [InlineKeyboardButton(text="📊 Statistika", callback_data="admin:stats")],
-            [InlineKeyboardButton(text="🚴 Kuryerlar", callback_data="admin:couriers")],
-            [InlineKeyboardButton(text="📦 Aktiv buyurtmalar", callback_data="admin:active_orders")],
-            [InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="admin:settings")]
+    for cat, items in demo_foods.items():
+        for (name, desc, price, rating, is_new) in items:
+            s.add(Food(
+                category_id=cat_ids[cat],
+                name=name,
+                description=desc,
+                price=price,
+                rating=rating,
+                is_new=is_new,
+                is_active=True,
+                image_url=None,
+            ))
+
+    await s.commit()
+
+async def upsert_setting(s: AsyncSession, key: str, value: str):
+    existing = await s.get(Setting, key)
+    if existing:
+        existing.value = value
+    else:
+        s.add(Setting(key=key, value=value))
+
+async def get_setting_int(s: AsyncSession, key: str) -> Optional[int]:
+    v = await s.get(Setting, key)
+    if not v or not v.value.strip():
+        return None
+    try:
+        return int(v.value.strip())
+    except ValueError:
+        return None
+
+# =========================================================
+# TELEGRAM initData VERIFY (FastAPI)
+# =========================================================
+
+def verify_telegram_init_data(init_data: str, bot_token: str) -> Dict[str, str]:
+    """
+    Telegram WebApp initData verification:
+    https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+    Returns parsed key-value dict if ok, else raises.
+    """
+    if not init_data:
+        raise ValueError("Empty initData")
+
+    parsed = dict([kv.split("=", 1) for kv in init_data.split("&") if "=" in kv])
+    if "hash" not in parsed:
+        raise ValueError("No hash in initData")
+
+    received_hash = parsed.pop("hash")
+
+    data_check_string = "\n".join([f"{k}={parsed[k]}" for k in sorted(parsed.keys())])
+
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+    if not hmac.compare_digest(calculated_hash, received_hash):
+        raise ValueError("Invalid initData hash")
+
+    return parsed
+
+def parse_user_from_init_data(init_data: str) -> Dict[str, Any]:
+    parsed = dict([kv.split("=", 1) for kv in init_data.split("&") if "=" in kv])
+    user_json = parsed.get("user")
+    if not user_json:
+        raise ValueError("No user in initData")
+    # Telegram encodes JSON with url-encoding in initData
+    # FastAPI doesn't decode it for us here; Request will pass raw header. We do percent-decoding via replace trick:
+    from urllib.parse import unquote
+    return json.loads(unquote(user_json))
+
+# =========================================================
+# UTIL
+# =========================================================
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+def fmt_dt(dt: datetime) -> str:
+    # Show in Tashkent time, seconds
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(TZ_TASHKENT)
+    return local.strftime("%Y-%m-%d %H:%M:%S")
+
+def gen_order_number() -> str:
+    # short unique
+    return datetime.now().strftime("%y%m%d") + "-" + "".join(secrets.choice(string.digits) for _ in range(6))
+
+def money(n: int) -> str:
+    return f"{n:,}".replace(",", " ")
+
+def maps_link(lat: float, lng: float) -> str:
+    return f"https://maps.google.com/?q={lat},{lng}"
+
+def is_admin(user_id: int) -> bool:
+    return user_id in set(CONFIG.ADMIN_IDS)
+
+# =========================================================
+# SERVICES
+# =========================================================
+
+async def get_or_create_user(s: AsyncSession, tg_id: int, username: Optional[str], full_name: str) -> User:
+    q = await s.execute(select(User).where(User.tg_id == tg_id))
+    u = q.scalar_one_or_none()
+    if u:
+        # update basics
+        u.username = username
+        u.full_name = full_name
+        return u
+    u = User(tg_id=tg_id, username=username, full_name=full_name, joined_at=now_utc())
+    s.add(u)
+    await s.flush()
+    return u
+
+async def apply_referral_once(s: AsyncSession, user: User, ref_id: Optional[int]):
+    if not ref_id:
+        return
+    if user.ref_by_user_id:
+        return
+    if ref_id == user.id:
+        return
+    ref_user = await s.get(User, ref_id)
+    if not ref_user:
+        return
+    user.ref_by_user_id = ref_id
+
+async def referral_stats(s: AsyncSession, user_id: int) -> Tuple[int, int, int]:
+    # ref_count: users where ref_by_user_id=user_id
+    ref_count = (await s.execute(select(func.count(User.id)).where(User.ref_by_user_id == user_id))).scalar_one()
+    orders_count = (await s.execute(select(func.count(Order.id)).where(Order.user_id.in_(
+        select(User.id).where(User.ref_by_user_id == user_id)
+    )))).scalar_one()
+    delivered = (await s.execute(select(func.count(Order.id)).where(
+        Order.user_id.in_(select(User.id).where(User.ref_by_user_id == user_id)),
+        Order.status.in_([OrderStatus.DELIVERED.value])
+    ))).scalar_one()
+    return int(ref_count or 0), int(orders_count or 0), int(delivered or 0)
+
+async def maybe_issue_referral_promo(s: AsyncSession, user: User) -> Optional[Promo]:
+    ref_count, _, _ = await referral_stats(s, user.id)
+    if ref_count >= 3 and not user.referral_promo_issued:
+        code = "FIESTA15-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+        promo = Promo(
+            code=code,
+            discount_percent=15,
+            expires_at=now_utc() + timedelta(days=30),
+            usage_limit=1,
+            used_count=0,
+            is_active=True,
+        )
+        s.add(promo)
+        user.referral_promo_issued = True
+        await s.flush()
+        return promo
+    return None
+
+async def list_last_orders(s: AsyncSession, user_id: int, limit: int = 10) -> List[Order]:
+    q = await s.execute(
+        select(Order).where(Order.user_id == user_id).order_by(Order.created_at.desc()).limit(limit)
+    )
+    return list(q.scalars().all())
+
+async def list_order_items(s: AsyncSession, order_id: int) -> List[OrderItem]:
+    q = await s.execute(select(OrderItem).where(OrderItem.order_id == order_id))
+    return list(q.scalars().all())
+
+async def validate_promo(s: AsyncSession, code: str) -> Optional[Promo]:
+    code = (code or "").strip().upper()
+    if not code:
+        return None
+    q = await s.execute(select(Promo).where(Promo.code == code, Promo.is_active == True))
+    promo = q.scalar_one_or_none()
+    if not promo:
+        return None
+    if promo.expires_at and promo.expires_at < now_utc():
+        return None
+    if promo.usage_limit and promo.used_count >= promo.usage_limit:
+        return None
+    return promo
+
+async def promo_mark_used(s: AsyncSession, promo_id: int):
+    promo = await s.get(Promo, promo_id)
+    if not promo:
+        return
+    promo.used_count += 1
+
+async def create_order_from_webapp(
+    s: AsyncSession,
+    user: User,
+    payload: Dict[str, Any],
+) -> Tuple[Order, List[OrderItem], Optional[Promo]]:
+    if payload.get("type") != "order_create":
+        raise ValueError("Unsupported type")
+
+    items = payload.get("items") or []
+    if not isinstance(items, list) or not items:
+        raise ValueError("Empty items")
+
+    total = int(payload.get("total") or 0)
+    if total < 50000:
+        raise ValueError("MIN_TOTAL_50000")
+
+    customer_name = (payload.get("customer_name") or user.full_name or "").strip()[:128]
+    phone = (payload.get("phone") or "").strip()[:32]
+    comment = (payload.get("comment") or "").strip()[:255] or None
+
+    loc = payload.get("location") or {}
+    lat = loc.get("lat")
+    lng = loc.get("lng")
+    if lat is None or lng is None:
+        raise ValueError("NO_LOCATION")
+
+    promo_code = (payload.get("promo_code") or "").strip().upper()
+    promo = None
+    if promo_code:
+        promo = await validate_promo(s, promo_code)
+        if not promo:
+            raise ValueError("INVALID_PROMO")
+
+    order_number = gen_order_number()
+    order = Order(
+        order_number=order_number,
+        user_id=user.id,
+        customer_name=customer_name or user.full_name,
+        phone=phone,
+        comment=comment,
+        total=total,
+        status=OrderStatus.NEW.value,
+        created_at=now_utc(),
+        updated_at=now_utc(),
+        delivered_at=None,
+        location_lat=float(lat),
+        location_lng=float(lng),
+        courier_id=None,
+        admin_channel_message_id=None,
+        courier_message_id=None,
+    )
+    s.add(order)
+    await s.flush()
+
+    out_items: List[OrderItem] = []
+    # trust snapshot from payload, but verify food_id exists
+    for it in items:
+        food_id = int(it.get("food_id"))
+        qty = int(it.get("qty"))
+        if qty <= 0:
+            continue
+        food = await s.get(Food, food_id)
+        if not food or not food.is_active:
+            raise ValueError(f"FOOD_NOT_FOUND:{food_id}")
+
+        name_snap = str(it.get("name") or food.name)[:128]
+        price_snap = int(it.get("price") or food.price)
+        line_total = price_snap * qty
+        oi = OrderItem(
+            order_id=order.id,
+            food_id=food_id,
+            name_snapshot=name_snap,
+            price_snapshot=price_snap,
+            qty=qty,
+            line_total=line_total
+        )
+        s.add(oi)
+        out_items.append(oi)
+
+    if not out_items:
+        raise ValueError("Empty items after validation")
+
+    if promo:
+        # We do not change total here (client already computed). Just mark used on success.
+        await promo_mark_used(s, promo.id)
+
+    await s.commit()
+    return order, out_items, promo
+
+async def update_order_status(s: AsyncSession, order_id: int, new_status: OrderStatus, courier_id: Optional[int] = None):
+    o = await s.get(Order, order_id)
+    if not o:
+        raise ValueError("ORDER_NOT_FOUND")
+    o.status = new_status.value
+    o.updated_at = now_utc()
+    if courier_id is not None:
+        o.courier_id = courier_id
+    if new_status == OrderStatus.DELIVERED:
+        o.delivered_at = now_utc()
+    await s.commit()
+    return o
+
+async def active_orders(s: AsyncSession) -> List[Order]:
+    active = [OrderStatus.NEW.value, OrderStatus.CONFIRMED.value, OrderStatus.COOKING.value,
+              OrderStatus.COURIER_ASSIGNED.value, OrderStatus.OUT_FOR_DELIVERY.value]
+    q = await s.execute(select(Order).where(Order.status.in_(active)).order_by(Order.created_at.desc()))
+    return list(q.scalars().all())
+
+async def get_bot_username(bot: Bot) -> str:
+    me = await bot.get_me()
+    return me.username or "YourBot"
+
+# =========================================================
+# TELEGRAM NOTIFY / MESSAGE BUILDERS
+# =========================================================
+
+def order_items_text(items: List[OrderItem]) -> str:
+    lines = []
+    for it in items:
+        lines.append(f"• {it.name_snapshot} x{it.qty} = {money(it.line_total)}")
+    return "\n".join(lines)
+
+def admin_order_post_text(user: User, order: Order, items: List[OrderItem]) -> str:
+    lat = float(order.location_lat)
+    lng = float(order.location_lng)
+    return (
+        f"🆕 Новый заказ №{order.order_number}\n"
+        f"👤 Пользователь: {user.full_name} (@{user.username or '—'})\n"
+        f"📞 Телефон: {order.phone}\n"
+        f"💰 Сумма: {money(order.total)} сум\n"
+        f"🕒 Время: {fmt_dt(order.created_at)}\n"
+        f"📍 Локация: {lat},{lng}\n"
+        f"🔗 Карта: {maps_link(lat,lng)}\n"
+        f"🍽️ Заказ:\n{order_items_text(items)}\n\n"
+        f"📦 Статус: {STATUS_LABELS[OrderStatus(order.status)]}"
+    )
+
+def user_order_accept_text(order: Order) -> str:
+    return (
+        f"Ваш заказ принят ✅\n"
+        f"🆔 Заказ №{order.order_number}\n"
+        f"💰 Сумма: {money(order.total)} сум\n"
+        f"📦 Статус: {STATUS_LABELS[OrderStatus(order.status)]}"
+    )
+
+def courier_order_text(order: Order, items: List[OrderItem]) -> str:
+    lat = float(order.location_lat)
+    lng = float(order.location_lng)
+    return (
+        f"🚴 Новый заказ №{order.order_number}\n"
+        f"👤 Клиент: {order.customer_name}\n"
+        f"📞 Телефон: {order.phone}\n"
+        f"💰 Сумма: {money(order.total)} сум\n"
+        f"📍 Локация: {maps_link(lat,lng)}\n"
+        f"🍽️ Список:\n{order_items_text(items)}"
+    )
+
+def admin_inline_kb_for_order(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвержден", callback_data=f"adm_status:{order_id}:CONFIRMED"),
+            InlineKeyboardButton(text="🍳 Готовится", callback_data=f"adm_status:{order_id}:COOKING"),
+        ],
+        [
+            InlineKeyboardButton(text="🚴 Курьер", callback_data=f"adm_courier_pick:{order_id}"),
+            InlineKeyboardButton(text="❌ Отменен", callback_data=f"adm_status:{order_id}:CANCELED"),
+        ],
+    ])
+
+def courier_kb(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Qabul qildim", callback_data=f"courier_accept:{order_id}"),
+            InlineKeyboardButton(text="📦 Yetkazildi", callback_data=f"courier_delivered:{order_id}"),
         ]
+    ])
+
+# =========================================================
+# KEYBOARDS (CLIENT)
+# =========================================================
+
+def client_main_kb(webapp_url: str) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=webapp_url))],
+            [KeyboardButton(text="📦 Мои заказы")],
+            [KeyboardButton(text="ℹ️ Информация о нас")],
+            [KeyboardButton(text="👥 Пригласить друга")],
+        ],
+        resize_keyboard=True
     )
-    return keyboard
 
-def get_order_status_keyboard(order_id: int):
-    """Buyurtma statusi klaviaturasi"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Подтвержден", callback_data=f"status:confirmed:{order_id}"),
-                InlineKeyboardButton(text="🍳 Готовится", callback_data=f"status:cooking:{order_id}")
-            ],
-            [
-                InlineKeyboardButton(text="🚴 Курьер", callback_data=f"status:courier:{order_id}")
-            ],
-            [
-                InlineKeyboardButton(text="❌ Отменить", callback_data=f"status:canceled:{order_id}")
-            ]
-        ]
-    )
-    return keyboard
+def shop_inline_kb(webapp_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=webapp_url))]
+    ])
 
-def get_courier_choice_keyboard(order_id: int):
-    """Kuryer tanlash klaviaturasi"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🚴 Выбрать курьера", callback_data=f"choose_courier:{order_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_order:{order_id}")]
-        ]
-    )
-    return keyboard
+# =========================================================
+# FSM (ADMIN)
+# =========================================================
 
-def get_courier_list_keyboard(order_id: int, couriers: List[Courier]):
-    """Kuryerlar ro'yxati klaviaturasi"""
-    buttons = []
-    for courier in couriers:
-        status = "🟢" if courier.is_active else "🔴"
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{status} {courier.name}",
-                callback_data=f"assign_courier:{order_id}:{courier.id}"
-            )
-        ])
-    
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_status:{order_id}")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+class AdminStates(StatesGroup):
+    set_shop_channel = State()
+    set_courier_channel = State()
+    add_courier_chat_id = State()
+    add_courier_name = State()
+    create_promo_code = State()
+    create_promo_discount = State()
+    create_promo_expires_days = State()
+    create_promo_usage_limit = State()
 
-def get_courier_order_keyboard(order_id: int):
-    """Kuryer buyurtma klaviaturasi"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Qabul qildim", callback_data=f"courier_accept:{order_id}"),
-                InlineKeyboardButton(text="📦 Yetkazildi", callback_data=f"courier_delivered:{order_id}")
-            ]
-        ]
-    )
-    return keyboard
+# =========================================================
+# BOT ROUTERS
+# =========================================================
 
-# Handlerlar
+router_client = Router()
+router_admin = Router()
+router_courier = Router()
 
-# ========================
-# CLIENT HANDLERS
-# ========================
+# ---------------- CLIENT: /start ----------------
 
-@client_router.message(CommandStart())
+@router_client.message(CommandStart())
 async def cmd_start(message: Message):
-    """/start komandasi"""
-    args = message.text.split()
-    ref_by = None
-    
-    if len(args) > 1:
-        try:
-            ref_by = int(args[1])
-        except ValueError:
-            pass
-    
-    user = await get_or_create_user(
-        tg_id=message.from_user.id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name,
-        ref_by=ref_by
-    )
-    
-    welcome_text = (
-        f"🌟 Добро Пожаловать в FIESTA! {message.from_user.full_name}\n\n"
+    ref_arg = None
+    if message.text:
+        parts = message.text.strip().split(maxsplit=1)
+        if len(parts) == 2:
+            ref_arg = parts[1].strip()
+    ref_id = None
+    if ref_arg and ref_arg.isdigit():
+        ref_id = int(ref_arg)
+
+    async with SessionLocal() as s:
+        u = await get_or_create_user(
+            s,
+            tg_id=message.from_user.id,
+            username=message.from_user.username,
+            full_name=message.from_user.full_name or "User"
+        )
+        await apply_referral_once(s, u, ref_id)
+        await s.commit()
+
+    await message.answer(
+        f"Добро пожаловать в FIESTA! {message.from_user.full_name}\n"
         f"Для заказа перейдите по кнопке ➡️\n"
-        f"🛍 Заказать"
+        f"🛍 Заказать",
+        reply_markup=client_main_kb(CONFIG.WEBAPP_URL)
     )
-    
-    await message.answer(
-        welcome_text,
-        reply_markup=get_client_main_keyboard()
-    )
-    
-    # Menyu tugmasini o'rnatish
-    try:
-        await bot.set_chat_menu_button(
-            chat_id=message.chat.id,
-            menu_button=MenuButtonWebApp(text="🛍 Заказать", web_app=WebAppInfo(url=WEBAPP_URL))
-        )
-    except Exception as e:
-        logger.error(f"Error setting menu button: {e}")
 
-@client_router.message(F.text == "📦 Мои заказы")
+# ---------------- CLIENT: menu buttons ----------------
+
+@router_client.message(F.text == "ℹ️ Информация о нас")
+async def info_about(message: Message):
+    await message.answer(
+        "🌟 Добро Пожаловать в FIESTA !\n"
+        "📍 Наш адрес:Хорезмская область, г.Хива, махаллинский сход граждан Гиламчи\n"
+        "🏢﻿ Ориентир: Школа №12 Оруджева\n"
+        "📞 Контактный номер: +998 91 420 15 15\n"
+        "🕙﻿ Рабочие часы: 24/7\n"
+        "📷 Мы в Instagram: fiesta.khiva (https://www.instagram.com/fiesta.khiva?igsh=Z3VoMzE0eGx0ZTVo)\n"
+        "🔗 Найти нас на карте: Место расположение (https://maps.app.goo.gl/dpBVHBWX1K7NTYVR7)"
+    )
+
+@router_client.message(F.text == "📦 Мои заказы")
 async def my_orders(message: Message):
-    """Mening buyurtmalarim"""
-    try:
-        async with AsyncSessionLocal() as session:
-            # Avval user ni topish
-            user_result = await session.execute(
-                select(User).where(User.tg_id == message.from_user.id)
-            )
-            user = user_result.scalar_one_or_none()
-            
-            if not user:
-                await message.answer(
-                    "Вы еще не сделали ни одного заказа.\n"
-                    "Чтобы сделать заказ, нажмите кнопку ниже ⬇️",
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=WEBAPP_URL))]],
-                        resize_keyboard=True
-                    )
-                )
-                return
-            
-            # Endi buyurtmalarni topish
-            result = await session.execute(
-                select(Order)
-                .where(Order.user_id == user.id)
-                .order_by(Order.created_at.desc())
-                .limit(10)
-            )
-            orders = result.scalars().all()
-            
-            if not orders:
-                await message.answer(
-                    "📭 У вас пока нет заказов.\n\n"
-                    "Сделайте свой первый заказ! 🛍️",
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="🛍 Заказать", web_app=WebAppInfo(url=WEBAPP_URL))]],
-                        resize_keyboard=True
-                    )
-                )
-            else:
-                response = "📦 Ваши последние заказы:\n\n"
-                for order in orders:
-                    status_emoji = {
-                        'NEW': '🆕',
-                        'CONFIRMED': '✅',
-                        'COOKING': '🍳',
-                        'COURIER_ASSIGNED': '🚴',
-                        'OUT_FOR_DELIVERY': '📦',
-                        'DELIVERED': '🎉',
-                        'CANCELED': '❌'
-                    }.get(order.status, '📝')
-                    
-                    status_text = {
-                        'NEW': 'Принят',
-                        'CONFIRMED': 'Подтвержден',
-                        'COOKING': 'Готовится',
-                        'COURIER_ASSIGNED': 'Курьер назначен',
-                        'OUT_FOR_DELIVERY': 'Передан курьеру',
-                        'DELIVERED': 'Доставлен',
-                        'CANCELED': 'Отменен'
-                    }.get(order.status, order.status)
-                    
-                    response += (
-                        f"{status_emoji} <b>Заказ №{order.order_number}</b>\n"
-                        f"📅 {order.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-                        f"💰 {format_price(order.total)} сум\n"
-                        f"📊 Статус: {status_text}\n"
-                        f"━━━━━━━━━━━━━━\n"
-                    )
-                
-                await message.answer(response, parse_mode="HTML")
-    except Exception as e:
-        logger.error(f"Error in my_orders: {e}")
-        await message.answer(
-            "⚠️ Произошла ошибка при получении заказов. Пожалуйста, попробуйте позже.",
-            reply_markup=get_client_main_keyboard()
-        )
+    async with SessionLocal() as s:
+        u_q = await s.execute(select(User).where(User.tg_id == message.from_user.id))
+        u = u_q.scalar_one_or_none()
+        if not u:
+            await message.answer("Сначала нажмите /start")
+            return
 
-@client_router.message(F.text == "ℹ️ Информация о нас")
-async def about_us(message: Message):
-    """Ma'lumot"""
-    about_text = (
-        "🌟 <b>Добро Пожаловать в FIESTA!</b>\n\n"
-        "📍 <b>Наш адрес:</b> Хорезмская область, г.Хива, махаллинский сход граждан Гиламчи\n"
-        "🏢 <b>Ориентир:</b> Школа №12 Оруджева\n"
-        "📞 <b>Контактный номер:</b> +998 91 420 15 15\n"
-        "🕙 <b>Рабочие часы:</b> 24/7\n"
-        "📷 <b>Мы в Instagram:</b> fiesta.khiva\n"
-        "🔗 <b>Найти нас на карте:</b> https://maps.app.goo.gl/dpBVHBWX1K7NTYVR7\n\n"
-        "Мы всегда рады вам! ❤️"
-    )
-    await message.answer(about_text, parse_mode="HTML")
-
-@client_router.message(F.text == "👥 Пригласить друга")
-async def invite_friend(message: Message):
-    """Referral"""
-    try:
-        async with AsyncSessionLocal() as session:
-            # Referral statistikani olish
-            result = await session.execute(
-                select(ReferralStat).where(ReferralStat.user_id == message.from_user.id)
-            )
-            stat = result.scalar_one_or_none()
-            
-            if not stat:
-                stat = ReferralStat(user_id=message.from_user.id)
-                session.add(stat)
-                await session.commit()
-            
-            # Buyurtmalar soni
-            user_result = await session.execute(
-                select(User).where(User.tg_id == message.from_user.id)
-            )
-            user = user_result.scalar_one()
-            
-            orders_result = await session.execute(
-                select(func.count(Order.id)).where(Order.user_id == user.id)
-            )
-            orders_count = orders_result.scalar() or 0
-            
-            delivered_result = await session.execute(
-                select(func.count(Order.id)).where(
-                    Order.user_id == user.id,
-                    Order.status == 'DELIVERED'
-                )
-            )
-            delivered_count = delivered_result.scalar() or 0
-            
-            bot_username = (await bot.me()).username
-            referral_link = f"https://t.me/{bot_username}?start={message.from_user.id}"
-            
-            referral_text = (
-                "👥 <b>Пригласите друга и получите скидку!</b>\n\n"
-                f"📊 <b>Ваша статистика:</b>\n"
-                f"• Приглашено друзей: {stat.ref_count}\n"
-                f"• Ваших заказов: {orders_count}\n"
-                f"• Доставлено заказов: {delivered_count}\n\n"
-                f"🔗 <b>Ваша реферальная ссылка:</b>\n"
-                f"<code>{referral_link}</code>\n\n"
-                "🎁 <b>Бонусы:</b>\n"
-                "• За 3 приглашенных друга - промокод 15%\n"
-                "• За 5 приглашенных - промокод 20%\n"
-                "• За 10 приглашенных - промокод 30%\n\n"
-                "Поделитесь ссылкой с друзьями и получайте скидки! 🎉"
-            )
-            
-            await message.answer(referral_text, parse_mode="HTML")
-            
-            # Promo code tekshirish va berish
-            if stat.ref_count >= 3:
-                # Promo kod mavjudligini tekshirish
-                promo_result = await session.execute(
-                    select(Promo).where(Promo.code.like(f"REF{message.from_user.id}%"))
-                )
-                existing_promo = promo_result.scalar_one_or_none()
-                
-                if not existing_promo:
-                    discount = 15
-                    if stat.ref_count >= 10:
-                        discount = 30
-                    elif stat.ref_count >= 5:
-                        discount = 20
-                    
-                    promo_code = f"REF{message.from_user.id}{random.randint(100, 999)}"
-                    new_promo = Promo(
-                        code=promo_code,
-                        discount_percent=discount,
-                        expires_at=datetime.now(TIMEZONE) + timedelta(days=30),
-                        usage_limit=5,
-                        is_active=True
-                    )
-                    session.add(new_promo)
-                    await session.commit()
-                    
-                    await message.answer(
-                        f"🎉 <b>Поздравляем!</b>\n\n"
-                        f"Вы получили промокод: <code>{promo_code}</code>\n"
-                        f"📉 Скидка: {discount}%\n"
-                        f"⏳ Действует до: {new_promo.expires_at.strftime('%d.%m.%Y')}\n\n"
-                        f"Используйте его при оформлении заказа!",
-                        parse_mode="HTML"
-                    )
-    
-    except Exception as e:
-        logger.error(f"Error in invite_friend: {e}")
-        await message.answer(
-            "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.",
-            reply_markup=get_client_main_keyboard()
-        )
-
-@client_router.message(F.text == "📞 Контакты")
-async def contacts(message: Message):
-    """Kontaktlar"""
-    contacts_text = (
-        "📞 <b>Контакты FIESTA</b>\n\n"
-        "📍 <b>Адрес:</b> Хива, махалла Гиламчи\n"
-        "🏫 <b>Ориентир:</b> Школа №12 Оруджева\n\n"
-        "📱 <b>Телефоны:</b>\n"
-        "• +998 91 420 15 15 (доставка)\n"
-        "• +998 93 123 45 67 (администрация)\n\n"
-        "🕒 <b>Режим работы:</b> 24/7\n\n"
-        "📧 <b>Email:</b> fiesta.khiva@gmail.com\n"
-        "📷 <b>Instagram:</b> @fiesta.khiva\n\n"
-        "Мы всегда на связи! 💬"
-    )
-    await message.answer(contacts_text, parse_mode="HTML")
-
-@client_router.message(Command("shop"))
-async def cmd_shop(message: Message):
-    """Shop komandasi"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(
-                text="🛍 Открыть магазин",
-                web_app=WebAppInfo(url=WEBAPP_URL)
-            )
-        ]]
-    )
-    
-    await message.answer(
-        "🛒 <b>Добро пожаловать в магазин FIESTA!</b>\n\n"
-        "Нажмите кнопку ниже, чтобы открыть меню и сделать заказ ⬇️",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
-
-# ========================
-# WEB APP DATA HANDLER
-# ========================
-
-@client_router.message(F.web_app_data)
-async def handle_web_app_data(message: WebAppData):
-    """WebApp dan kelgan ma'lumotlarni qayta ishlash"""
-    try:
-        data = json.loads(message.web_app_data.data)
-        logger.info(f"WebApp data received from user {message.from_user.id}: {data}")
-        
-        if data.get('type') == 'order_create':
-            await process_order_create(message.from_user, data)
-        else:
-            await message.answer("Неизвестный тип данных от WebApp.")
-            
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
-        await message.answer("❌ Ошибка обработки заказа. Неверный формат данных.")
-    except Exception as e:
-        logger.error(f"Error processing web app data: {e}")
-        await message.answer("❌ Произошла ошибка при обработке заказа. Пожалуйста, попробуйте позже.")
-
-async def process_order_create(user, data: Dict):
-    """Buyurtma yaratish"""
-    try:
-        async with AsyncSessionLocal() as session:
-            # User ni olish
-            db_user = await get_or_create_user(
-                tg_id=user.id,
-                username=user.username,
-                full_name=user.full_name
-            )
-            
-            # Total tekshirish
-            total = Decimal(str(data['total']))
-            if total < 50000:
-                await bot.send_message(
-                    chat_id=user.id,
-                    text="❌ <b>Минимальная сумма заказа 50,000 сум</b>\n\n"
-                         "Добавьте еще товаров в корзину.",
-                    parse_mode="HTML"
-                )
-                return
-            
-            # Promo code tekshirish
-            promo_code = data.get('promo_code')
-            final_total = total
-            discount_amount = Decimal('0')
-            
-            if promo_code:
-                promo_result = await session.execute(
-                    select(Promo).where(
-                        Promo.code == promo_code,
-                        Promo.is_active == True,
-                        Promo.used_count < Promo.usage_limit,
-                        or_(
-                            Promo.expires_at == None,
-                            Promo.expires_at > datetime.now(TIMEZONE)
-                        )
-                    )
-                )
-                promo = promo_result.scalar_one_or_none()
-                
-                if promo:
-                    discount = total * Decimal(promo.discount_percent) / 100
-                    final_total = total - discount
-                    discount_amount = discount
-                    promo.used_count += 1
-                    
-                    # Promo ishlatilganligi haqida xabar
-                    promo_message = f"✅ Промокод применен! Скидка: {promo.discount_percent}% ({format_price(discount)} сум)"
-                else:
-                    promo_message = "❌ Неверный или просроченный промо-код"
-            else:
-                promo_message = ""
-            
-            # Order yaratish
-            order_number = generate_order_number()
-            order = Order(
-                order_number=order_number,
-                user_id=db_user.id,
-                customer_name=data['customer_name'],
-                phone=data['phone'],
-                comment=data.get('comment', ''),
-                total=final_total,
-                status='NEW',
-                location_lat=data['location']['lat'],
-                location_lng=data['location']['lng']
-            )
-            session.add(order)
-            await session.flush()
-            
-            # Order items yaratish
-            for item in data['items']:
-                order_item = OrderItem(
-                    order_id=order.id,
-                    food_id=item['food_id'],
-                    name_snapshot=item['name'],
-                    price_snapshot=Decimal(str(item['price'])),
-                    qty=item['qty'],
-                    line_total=Decimal(str(item['qty'])) * Decimal(str(item['price']))
-                )
-                session.add(order_item)
-            
-            await session.commit()
-            await session.refresh(order)
-            
-            # Referral statistikani yangilash
-            await update_referral_stats(db_user.tg_id)
-            
-            # User ga xabar
-            user_message = (
-                "✅ <b>Ваш заказ принят!</b>\n\n"
-                f"🆔 <b>Номер заказа:</b> {order.order_number}\n"
-                f"👤 <b>Имя:</b> {order.customer_name}\n"
-                f"📞 <b>Телефон:</b> {order.phone}\n"
-                f"💰 <b>Сумма:</b> {format_price(order.total)} сум\n"
-            )
-            
-            if discount_amount > 0:
-                user_message += f"🎁 <b>Скидка:</b> {format_price(discount_amount)} сум\n"
-            
-            user_message += (
-                f"📦 <b>Статус:</b> Принят\n\n"
-                f"📝 <b>Комментарий:</b> {order.comment if order.comment else 'нет'}\n\n"
-                "Мы свяжемся с вами для подтверждения заказа. ⏳"
-            )
-            
-            await bot.send_message(
-                chat_id=user.id,
-                text=user_message,
-                parse_mode="HTML"
-            )
-            
-            # Admin kanalga yuborish
-            await send_order_to_admin_channel(order)
-            
-    except Exception as e:
-        logger.error(f"Error in process_order_create: {e}")
-        await bot.send_message(
-            chat_id=user.id,
-            text="❌ Произошла ошибка при создании заказа. Пожалуйста, попробуйте позже или свяжитесь с администратором."
-        )
-
-async def send_order_to_admin_channel(order: Order):
-    """Buyurtmani admin kanaliga yuborish"""
-    try:
-        async with AsyncSessionLocal() as session:
-            # Order items olish
-            result = await session.execute(
-                select(OrderItem).where(OrderItem.order_id == order.id)
-            )
-            items = result.scalars().all()
-            
-            # User ma'lumotlari
-            user_result = await session.execute(
-                select(User).where(User.id == order.user_id)
-            )
-            user = user_result.scalar_one_or_none()
-            
-            items_text = ""
-            for item in items:
-                items_text += f"• {item.name_snapshot} x{item.qty} = {format_price(item.line_total)} сум\n"
-            
-            location_link = f"https://maps.google.com/?q={order.location_lat},{order.location_lng}"
-            
-            order_text = (
-                f"🆕 <b>НОВЫЙ ЗАКАЗ</b>\n\n"
-                f"🆔 <b>Номер:</b> {order.order_number}\n"
-                f"👤 <b>Клиент:</b> {order.customer_name}\n"
-                f"📞 <b>Телефон:</b> {order.phone}\n"
-                f"👨‍💼 <b>Telegram:</b> @{user.username if user and user.username else 'скрыт'}\n"
-                f"💰 <b>Сумма:</b> {format_price(order.total)} сум\n"
-                f"🕒 <b>Время:</b> {order.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-                f"📍 <b>Локация:</b> <a href='{location_link}'>На карте</a>\n\n"
-                f"📝 <b>Комментарий:</b>\n{order.comment if order.comment else 'нет'}\n\n"
-                f"🍽️ <b>Заказ:</b>\n{items_text}"
-            )
-            
-            message = await bot.send_message(
-                chat_id=SHOP_CHANNEL_ID,
-                text=order_text,
-                reply_markup=get_order_status_keyboard(order.id),
-                parse_mode="HTML",
-                disable_web_page_preview=True
-            )
-            
-            # Message ID ni saqlash
-            async with redis_client as r:
-                await r.set(f"order_message:{order.id}", message.message_id)
-                await r.set(f"order_channel:{order.id}", SHOP_CHANNEL_ID)
-                
-            logger.info(f"Order {order.id} sent to admin channel")
-            
-    except Exception as e:
-        logger.error(f"Error sending order to admin channel: {e}")
-
-# ========================
-# ADMIN HANDLERS
-# ========================
-
-@admin_router.message(Command("admin"))
-async def admin_panel(message: Message):
-    """Admin panel"""
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("⛔ Доступ запрещен.")
-        return
-    
-    await message.answer(
-        "⚙️ <b>Админ панель FIESTA</b>\n\n"
-        "Выберите раздел для управления:",
-        reply_markup=get_admin_main_keyboard(),
-        parse_mode="HTML"
-    )
-
-@admin_router.callback_query(F.data.startswith("admin:"))
-async def admin_menu_handler(callback: CallbackQuery):
-    """Admin menyusi"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("Доступ запрещен.", show_alert=True)
-        return
-    
-    action = callback.data.split(":")[1]
-    
-    if action == "foods":
-        await show_foods_menu(callback)
-    elif action == "categories":
-        await show_categories_menu(callback)
-    elif action == "promos":
-        await show_promos_menu(callback)
-    elif action == "stats":
-        await show_stats(callback)
-    elif action == "couriers":
-        await show_couriers_menu(callback)
-    elif action == "active_orders":
-        await show_active_orders(callback)
-    elif action == "settings":
-        await show_settings(callback)
-    elif action == "back":
-        await callback.message.edit_text(
-            "⚙️ <b>Админ панель FIESTA</b>\n\n"
-            "Выберите раздел для управления:",
-            reply_markup=get_admin_main_keyboard(),
-            parse_mode="HTML"
-        )
-    
-    await callback.answer()
-
-async def show_foods_menu(callback: CallbackQuery):
-    """Ovqatlar menyusi"""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="food:add")],
-            [InlineKeyboardButton(text="📝 Список блюд", callback_data="food:list")],
-            [InlineKeyboardButton(text="📊 Статистика блюд", callback_data="food:stats")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")]
-        ]
-    )
-    
-    await callback.message.edit_text(
-        "🍔 <b>Управление блюдами</b>\n\n"
-        "Выберите действие:",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
-
-async def show_categories_menu(callback: CallbackQuery):
-    """Kategoriyalar menyusi"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Category).order_by(Category.name)
-        )
-        categories = result.scalars().all()
-        
-        keyboard_buttons = []
-        for category in categories:
-            status = "🟢" if category.is_active else "🔴"
-            keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text=f"{status} {category.name}",
-                    callback_data=f"category:edit:{category.id}"
-                )
-            ])
-        
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="➕ Добавить категорию", callback_data="category:add")
-        ])
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")
-        ])
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        
-        await callback.message.edit_text(
-            "📂 <b>Управление категориями</b>\n\n"
-            f"Всего категорий: {len(categories)}\n"
-            "Выберите категорию для редактирования:",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
-async def show_promos_menu(callback: CallbackQuery):
-    """Promokodlar menyusi"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Promo).order_by(Promo.created_at.desc()).limit(20)
-        )
-        promos = result.scalars().all()
-        
-        keyboard_buttons = []
-        for promo in promos:
-            status = "🟢" if promo.is_active else "🔴"
-            expired = "⏳" if promo.expires_at and promo.expires_at < datetime.now(TIMEZONE) else ""
-            keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text=f"{status}{expired} {promo.code} ({promo.discount_percent}%)",
-                    callback_data=f"promo:edit:{promo.id}"
-                )
-            ])
-        
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="➕ Создать промокод", callback_data="promo:add")
-        ])
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")
-        ])
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        
-        active_count = sum(1 for p in promos if p.is_active)
-        used_count = sum(p.used_count for p in promos)
-        
-        await callback.message.edit_text(
-            "🎁 <b>Управление промокодами</b>\n\n"
-            f"Всего промокодов: {len(promos)}\n"
-            f"Активных: {active_count}\n"
-            f"Использовано раз: {used_count}\n\n"
-            "Выберите промокод для редактирования:",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
-async def show_stats(callback: CallbackQuery):
-    """Statistika"""
-    async with AsyncSessionLocal() as session:
-        # Bugungi statistika
-        today_start = datetime.now(TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        # Buyurtmalar
-        orders_today = await session.execute(
-            select(func.count(Order.id)).where(Order.created_at >= today_start)
-        )
-        orders_today_count = orders_today.scalar() or 0
-        
-        # Yetkazilgan buyurtmalar
-        delivered_today = await session.execute(
-            select(func.count(Order.id)).where(
-                Order.delivered_at >= today_start,
-                Order.status == 'DELIVERED'
-            )
-        )
-        delivered_today_count = delivered_today.scalar() or 0
-        
-        # Daromad
-        revenue_today = await session.execute(
-            select(func.sum(Order.total)).where(
-                Order.delivered_at >= today_start,
-                Order.status == 'DELIVERED'
-            )
-        )
-        revenue_today_amount = revenue_today.scalar() or Decimal('0')
-        
-        # Aktiv buyurtmalar
-        active_orders = await session.execute(
-            select(func.count(Order.id)).where(
-                Order.status.in_(['NEW', 'CONFIRMED', 'COOKING', 'COURIER_ASSIGNED', 'OUT_FOR_DELIVERY'])
-            )
-        )
-        active_orders_count = active_orders.scalar() or 0
-        
-        # Foydalanuvchilar
-        total_users = await session.execute(select(func.count(User.id)))
-        total_users_count = total_users.scalar() or 0
-        
-        # Haftalik daromad
-        week_start = today_start - timedelta(days=7)
-        revenue_week = await session.execute(
-            select(func.sum(Order.total)).where(
-                Order.delivered_at >= week_start,
-                Order.status == 'DELIVERED'
-            )
-        )
-        revenue_week_amount = revenue_week.scalar() or Decimal('0')
-        
-        stats_text = (
-            "📊 <b>Статистика FIESTA</b>\n\n"
-            "📅 <b>Сегодня:</b>\n"
-            f"• Заказов: {orders_today_count}\n"
-            f"• Доставлено: {delivered_today_count}\n"
-            f"• Выручка: {format_price(revenue_today_amount)} сум\n\n"
-            "📈 <b>Общая:</b>\n"
-            f"• Активных заказов: {active_orders_count}\n"
-            f"• Пользователей: {total_users_count}\n"
-            f"• Выручка за неделю: {format_price(revenue_week_amount)} сум\n\n"
-            "📋 <b>Дополнительно:</b>\n"
-            "• /stats_detailed - подробная статистика\n"
-            "• /top_foods - популярные блюда"
-        )
-        
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📅 Детальная статистика", callback_data="stats:detailed")],
-                [InlineKeyboardButton(text="🍔 Популярные блюда", callback_data="stats:top_foods")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")]
-            ]
-        )
-        
-        await callback.message.edit_text(
-            stats_text,
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
-async def show_couriers_menu(callback: CallbackQuery):
-    """Kuryerlar menyusi"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Courier).order_by(Courier.is_active.desc(), Courier.name)
-        )
-        couriers = result.scalars().all()
-        
-        keyboard_buttons = []
-        for courier in couriers:
-            status = "🟢" if courier.is_active else "🔴"
-            keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text=f"{status} {courier.name}",
-                    callback_data=f"courier:edit:{courier.id}"
-                )
-            ])
-        
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="➕ Добавить курьера", callback_data="courier:add")
-        ])
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="📊 Статистика курьеров", callback_data="courier:stats")
-        ])
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")
-        ])
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        
-        active_count = sum(1 for c in couriers if c.is_active)
-        
-        await callback.message.edit_text(
-            "🚴 <b>Управление курьерами</b>\n\n"
-            f"Всего курьеров: {len(couriers)}\n"
-            f"Активных: {active_count}\n\n"
-            "Выберите курьера для редактирования:",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
-async def show_active_orders(callback: CallbackQuery):
-    """Aktiv buyurtmalar"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Order).where(
-                Order.status.in_(['NEW', 'CONFIRMED', 'COOKING', 'COURIER_ASSIGNED', 'OUT_FOR_DELIVERY'])
-            ).order_by(
-                Order.created_at.desc()
-            ).limit(20)
-        )
-        orders = result.scalars().all()
-        
+        orders = await list_last_orders(s, u.id, limit=10)
         if not orders:
-            await callback.message.edit_text(
-                "📭 <b>Нет активных заказов</b>\n\n"
-                "Все заказы обработаны или доставлены.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")]
-                    ]
-                ),
-                parse_mode="HTML"
+            await message.answer(
+                "В данный момент у вас нет активных заказов в нашем магазине.\n"
+                "Чтобы открыть магазин, введите команду — /shop"
             )
             return
-        
-        # Status bo'yicha guruhlash
-        status_groups = {}
-        for order in orders:
-            if order.status not in status_groups:
-                status_groups[order.status] = []
-            status_groups[order.status].append(order)
-        
-        text = "📦 <b>Активные заказы</b>\n\n"
-        
-        status_names = {
-            'NEW': '🆕 Новые',
-            'CONFIRMED': '✅ Подтвержденные',
-            'COOKING': '🍳 Готовятся',
-            'COURIER_ASSIGNED': '🚴 Курьеры назначены',
-            'OUT_FOR_DELIVERY': '📦 В пути'
-        }
-        
-        for status, status_text in status_names.items():
-            if status in status_groups:
-                text += f"{status_text}: {len(status_groups[status])}\n"
-        
-        text += "\nВыберите заказ для управления:"
-        
-        keyboard_buttons = []
-        for order in orders:
-            status_emoji = {
-                'NEW': '🆕',
-                'CONFIRMED': '✅',
-                'COOKING': '🍳',
-                'COURIER_ASSIGNED': '🚴',
-                'OUT_FOR_DELIVERY': '📦'
-            }.get(order.status, '📝')
-            
-            keyboard_buttons.append([
-                InlineKeyboardButton(
-                    text=f"{status_emoji} #{order.order_number} - {format_price(order.total)} сум",
-                    callback_data=f"order:detail:{order.id}"
-                )
-            ])
-        
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")
-        ])
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode="HTML"
+
+        texts = []
+        for o in orders:
+            items = await list_order_items(s, o.id)
+            head = f"🆔 Заказ №{o.order_number} | {fmt_dt(o.created_at)} | 💰 {money(o.total)} | 📦 {STATUS_LABELS[OrderStatus(o.status)]}"
+            body = "\n".join([f"  - {it.name_snapshot} x{it.qty} = {money(it.line_total)}" for it in items])
+            texts.append(head + "\n" + body)
+        await message.answer("\n\n".join(texts))
+
+@router_client.message(Command("shop"))
+async def shop_cmd(message: Message):
+    await message.answer(
+        "Чтобы открыть наш магазин, нажмите кнопку ниже",
+        reply_markup=shop_inline_kb(CONFIG.WEBAPP_URL)
+    )
+
+@router_client.message(F.text == "👥 Пригласить друга")
+async def invite_friend(message: Message, bot: Bot):
+    async with SessionLocal() as s:
+        u_q = await s.execute(select(User).where(User.tg_id == message.from_user.id))
+        u = u_q.scalar_one_or_none()
+        if not u:
+            await message.answer("Сначала нажмите /start")
+            return
+        bot_username = await get_bot_username(bot)
+        ref_count, orders_count, delivered_count = await referral_stats(s, u.id)
+        promo = await maybe_issue_referral_promo(s, u)
+        await s.commit()
+
+    await message.answer(
+        "За приглашение друга, вы можете получить промо-код от нас\n"
+        f"👥 Вы пригласили {ref_count} человек\n"
+        f"🛒 Оформили заказов: {orders_count}\n"
+        f"💰 Оплатили заказов: {delivered_count}\n"
+        f"👤 Ваша реферальная ссылка: https://t.me/{bot_username}?start={u.id}\n"
+        "Пригласите трех человек и вы получите от нас промо-код со скидкой 15%"
+    )
+    if promo:
+        await message.answer(
+            f"🎁 Ваш промокод на 15% готов!\n"
+            f"Код: {promo.code}\n"
+            f"Действует до: {fmt_dt(promo.expires_at)}\n"
+            f"Использований: 1"
         )
 
-async def show_settings(callback: CallbackQuery):
-    """Sozlamalar"""
-    settings_text = (
-        "⚙️ <b>Настройки бота</b>\n\n"
-        f"🆔 <b>ID бота:</b> {bot.id}\n"
-        f"👤 <b>Имя бота:</b> {(await bot.me()).first_name}\n"
-        f"🔗 <b>WebApp URL:</b> {WEBAPP_URL}\n"
-        f"📢 <b>Канал заказов:</b> {SHOP_CHANNEL_ID}\n"
-        f"🚴 <b>Канал курьеров:</b> {COURIER_CHANNEL_ID}\n\n"
-        f"👑 <b>Админы:</b> {', '.join(map(str, ADMIN_IDS))}\n\n"
-        "<i>Для изменения настроек отредактируйте .env файл</i>"
-    )
-    
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Проверить подключения", callback_data="settings:check")],
-            [InlineKeyboardButton(text="📊 Статус системы", callback_data="settings:status")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")]
-        ]
-    )
-    
-    await callback.message.edit_text(
-        settings_text,
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
+# ---------------- WEBAPP -> BOT ----------------
 
-# ========================
-# ORDER STATUS HANDLERS
-# ========================
-
-@admin_router.callback_query(F.data.startswith("status:"))
-async def handle_order_status(callback: CallbackQuery):
-    """Buyurtma statusini o'zgartirish"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("Доступ запрещен.", show_alert=True)
-        return
-    
+@router_client.message(F.web_app_data)
+async def webapp_data(message: Message, bot: Bot):
     try:
-        _, action, order_id = callback.data.split(":")
-        order_id = int(order_id)
-        
-        async with AsyncSessionLocal() as session:
-            # Order ni olish
-            result = await session.execute(
-                select(Order).where(Order.id == order_id)
-            )
-            order = result.scalar_one()
-            
-            if action == "confirmed":
-                order.status = "CONFIRMED"
-                status_text = "✅ Подтвержден"
-            elif action == "cooking":
-                order.status = "COOKING"
-                status_text = "🍳 Готовится"
-            elif action == "courier":
-                # Kuryer tanlash menyusi
-                await choose_courier_for_order(callback, order_id)
-                await callback.answer()
-                return
-            elif action == "canceled":
-                order.status = "CANCELED"
-                status_text = "❌ Отменен"
-                
-                # Userga xabar
-                await bot.send_message(
-                    chat_id=order.user_id,  # E'tibor: bu user.id (primary key), tg_id emas
-                    text=f"❌ <b>Ваш заказ №{order.order_number} отменен.</b>\n\n"
-                         "По вопросам обращайтесь к администратору.",
-                    parse_mode="HTML"
-                )
+        payload = json.loads(message.web_app_data.data)
+    except Exception:
+        await message.answer("Ошибка данных WebApp. Попробуйте ещё раз.")
+        return
+
+    async with SessionLocal() as s:
+        u_q = await s.execute(select(User).where(User.tg_id == message.from_user.id))
+        u = u_q.scalar_one_or_none()
+        if not u:
+            u = await get_or_create_user(s, message.from_user.id, message.from_user.username, message.from_user.full_name or "User")
+            await s.commit()
+
+        try:
+            order, items, promo = await create_order_from_webapp(s, u, payload)
+        except ValueError as e:
+            code = str(e)
+            if code == "MIN_TOTAL_50000":
+                await message.answer("Минимальная сумма заказа: 50 000 сум.")
+            elif code == "NO_LOCATION":
+                await message.answer("Нужно отправить локацию (lat/lng).")
+            elif code == "INVALID_PROMO":
+                await message.answer("Промокод недействителен.")
             else:
-                await callback.answer("Неизвестное действие")
-                return
-            
-            order.updated_at = datetime.now(TIMEZONE)
-            await session.commit()
-            
-            # Xabarni yangilash
-            await update_order_message(order)
-            
-            await callback.answer(f"Статус изменен на: {status_text}")
-            
-            # Agar status CONFIRMED bo'lsa, userga xabar
-            if action == "confirmed":
-                # User ni topish
-                user_result = await session.execute(
-                    select(User).where(User.id == order.user_id)
-                )
-                user = user_result.scalar_one_or_none()
-                
-                if user:
-                    await bot.send_message(
-                        chat_id=user.tg_id,
-                        text=f"✅ <b>Ваш заказ №{order.order_number} подтвержден!</b>\n\n"
-                             "Мы начали готовить ваш заказ. Ожидайте следующих уведомлений.",
-                        parse_mode="HTML"
-                    )
-    
-    except Exception as e:
-        logger.error(f"Error in handle_order_status: {e}")
-        await callback.answer("Ошибка при изменении статуса", show_alert=True)
-
-async def choose_courier_for_order(callback: CallbackQuery, order_id: int):
-    """Kuryer tanlash"""
-    async with AsyncSessionLocal() as session:
-        # Active kuryerlarni olish
-        result = await session.execute(
-            select(Courier).where(Courier.is_active == True).order_by(Courier.name)
-        )
-        couriers = result.scalars().all()
-        
-        if not couriers:
-            await callback.message.edit_text(
-                "❌ <b>Нет активных курьеров</b>\n\n"
-                "Добавьте курьеров в систему, прежде чем назначать заказы.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="➕ Добавить курьера", callback_data="courier:add")],
-                        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_status:{order_id}")]
-                    ]
-                ),
-                parse_mode="HTML"
-            )
+                await message.answer(f"Ошибка: {code}")
             return
-        
-        # Order ma'lumotlari
-        order_result = await session.execute(
-            select(Order).where(Order.id == order_id)
-        )
-        order = order_result.scalar_one()
-        
-        text = (
-            f"🚴 <b>Назначение курьера</b>\n\n"
-            f"Заказ: <b>№{order.order_number}</b>\n"
-            f"Сумма: <b>{format_price(order.total)} сум</b>\n"
-            f"Адрес: <a href='https://maps.google.com/?q={order.location_lat},{order.location_lng}'>Посмотреть на карте</a>\n\n"
-            "Выберите курьера:"
-        )
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_courier_list_keyboard(order_id, couriers),
-            parse_mode="HTML",
-            disable_web_page_preview=True
-        )
+        except Exception as e:
+            logger.exception("create_order error")
+            await message.answer("Ошибка создания заказа. Попробуйте позже.")
+            return
 
-@admin_router.callback_query(F.data.startswith("assign_courier:"))
-async def assign_courier_handler(callback: CallbackQuery):
-    """Kuryerni tayinlash"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("Доступ запрещен.", show_alert=True)
+        await message.answer(user_order_accept_text(order))
+
+        # Notify admin channel
+        shop_channel_id = await get_setting_int(s, "SHOP_CHANNEL_ID")
+        if shop_channel_id:
+            txt = admin_order_post_text(u, order, items)
+            msg = await bot.send_message(
+                chat_id=shop_channel_id,
+                text=txt,
+                reply_markup=admin_inline_kb_for_order(order.id)
+            )
+            order.admin_channel_message_id = msg.message_id
+            order.updated_at = now_utc()
+            await s.commit()
+
+# =========================================================
+# ADMIN PANEL
+# =========================================================
+
+def admin_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Актив buyurtmalar", callback_data="adm_active_orders")],
+        [InlineKeyboardButton(text="🚴 Kuryerlar", callback_data="adm_couriers")],
+        [InlineKeyboardButton(text="🎁 Promokodlar", callback_data="adm_promos")],
+        [InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="adm_settings")],
+    ])
+
+@router_admin.message(Command("admin"))
+async def admin_cmd(message: Message):
+    if not is_admin(message.from_user.id):
         return
-    
-    try:
-        _, order_id, courier_id = callback.data.split(":")
-        order_id = int(order_id)
-        courier_id = int(courier_id)
-        
-        async with AsyncSessionLocal() as session:
-            # Order ni olish
-            order_result = await session.execute(
-                select(Order).where(Order.id == order_id)
-            )
-            order = order_result.scalar_one()
-            
-            # Courier ni olish
-            courier_result = await session.execute(
-                select(Courier).where(Courier.id == courier_id)
-            )
-            courier = courier_result.scalar_one()
-            
-            # Yangilash
-            order.status = "COURIER_ASSIGNED"
-            order.courier_id = courier_id
-            order.updated_at = datetime.now(TIMEZONE)
-            await session.commit()
-            
-            # Admin xabarni yangilash
-            await update_order_message(order)
-            
-            # Kuryerga yuborish
-            await send_order_to_courier(order, courier)
-            
-            # Userga xabar
-            # User ni topish
-            user_result = await session.execute(
-                select(User).where(User.id == order.user_id)
-            )
-            user = user_result.scalar_one_or_none()
-            
-            if user:
-                await bot.send_message(
-                    chat_id=user.tg_id,
-                    text=f"🚴 <b>К вашему заказу №{order.order_number} назначен курьер!</b>\n\n"
-                         f"Имя курьера: <b>{courier.name}</b>\n"
-                         "Ожидайте доставку в ближайшее время.",
-                    parse_mode="HTML"
-                )
-            
-            await callback.answer(f"Курьер {courier.name} назначен")
-            
-            # Orqaga qaytish
-            await callback.message.edit_text(
-                f"✅ <b>Курьер назначен успешно!</b>\n\n"
-                f"Заказ: <b>№{order.order_number}</b>\n"
-                f"Курьер: <b>{courier.name}</b>\n"
-                f"Статус: <b>Курьер назначен</b>",
-                parse_mode="HTML"
-            )
-    
-    except Exception as e:
-        logger.error(f"Error in assign_courier_handler: {e}")
-        await callback.answer("Ошибка при назначении курьера", show_alert=True)
+    await message.answer("🔧 Admin panel", reply_markup=admin_menu_kb())
 
-async def update_order_message(order: Order):
-    """Buyurtma xabarini yangilash"""
-    try:
-        # Eski xabarni olish
-        async with redis_client as r:
-            message_id = await r.get(f"order_message:{order.id}")
-            channel_id = await r.get(f"order_channel:{order.id}")
-        
-        if message_id and channel_id:
-            # Order items olish
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(OrderItem).where(OrderItem.order_id == order.id)
-                )
-                items = result.scalars().all()
-                
-                # User ma'lumotlari
-                user_result = await session.execute(
-                    select(User).where(User.id == order.user_id)
-                )
-                user = user_result.scalar_one_or_none()
-                
-                items_text = ""
-                for item in items:
-                    items_text += f"• {item.name_snapshot} x{item.qty} = {format_price(item.line_total)} сум\n"
-                
-                location_link = f"https://maps.google.com/?q={order.location_lat},{order.location_lng}"
-                
-                status_text = {
-                    'NEW': '🆕 Принят',
-                    'CONFIRMED': '✅ Подтвержден',
-                    'COOKING': '🍳 Готовится',
-                    'COURIER_ASSIGNED': '🚴 Курьер назначен',
-                    'OUT_FOR_DELIVERY': '📦 Передан курьеру',
-                    'DELIVERED': '🎉 Доставлен',
-                    'CANCELED': '❌ Отменен'
-                }.get(order.status, order.status)
-                
-                # Courier ma'lumotlari
-                courier_text = ""
-                if order.courier_id:
-                    courier_result = await session.execute(
-                        select(Courier).where(Courier.id == order.courier_id)
-                    )
-                    courier = courier_result.scalar_one_or_none()
-                    if courier:
-                        courier_text = f"\n🚴 <b>Курьер:</b> {courier.name}"
-                
-                order_text = (
-                    f"{'✅ ' if order.status == 'DELIVERED' else ''}<b>ЗАКАЗ {order.order_number}</b>\n\n"
-                    f"👤 <b>Клиент:</b> {order.customer_name}\n"
-                    f"📞 <b>Телефон:</b> {order.phone}\n"
-                    f"👨‍💼 <b>Telegram:</b> @{user.username if user and user.username else 'скрыт'}\n"
-                    f"💰 <b>Сумма:</b> {format_price(order.total)} сум\n"
-                    f"📊 <b>Статус:</b> {status_text}\n"
-                    f"🕒 <b>Время:</b> {order.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-                    f"📍 <b>Локация:</b> <a href='{location_link}'>На карте</a>"
-                    f"{courier_text}\n\n"
-                    f"📝 <b>Комментарий:</b>\n{order.comment if order.comment else 'нет'}\n\n"
-                    f"🍽️ <b>Заказ:</b>\n{items_text}"
-                )
-                
-                if order.status == 'DELIVERED':
-                    keyboard = None
-                else:
-                    keyboard = get_order_status_keyboard(order.id)
-                
-                try:
-                    await bot.edit_message_text(
-                        chat_id=int(channel_id),
-                        message_id=int(message_id),
-                        text=order_text,
-                        reply_markup=keyboard,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True
-                    )
-                except Exception as e:
-                    logger.error(f"Error editing message: {e}")
-    
-    except Exception as e:
-        logger.error(f"Error in update_order_message: {e}")
+@router_admin.callback_query(F.data == "adm_settings")
+async def adm_settings(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    await cb.message.edit_text(
+        "⚙️ Sozlamalar:\n"
+        "SHOP_CHANNEL_ID va COURIER_CHANNEL_ID ni bot ichida o‘rnating.\n\n"
+        "Tanlang:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏪 SHOP_CHANNEL_ID set", callback_data="adm_set_shop")],
+            [InlineKeyboardButton(text="🚴 COURIER_CHANNEL_ID set", callback_data="adm_set_courier_channel")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="adm_back")],
+        ])
+    )
+    await cb.answer()
 
-async def send_order_to_courier(order: Order, courier: Courier):
-    """Buyurtmani kuryerga yuborish"""
+@router_admin.callback_query(F.data == "adm_back")
+async def adm_back(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    await cb.message.edit_text("🔧 Admin panel", reply_markup=admin_menu_kb())
+    await cb.answer()
+
+@router_admin.callback_query(F.data == "adm_set_shop")
+async def adm_set_shop(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id):
+        return
+    await state.set_state(AdminStates.set_shop_channel)
+    await cb.message.answer("SHOP_CHANNEL_ID yuboring (masalan: -1001234567890) yoki 0 (o‘chirish).")
+    await cb.answer()
+
+@router_admin.message(AdminStates.set_shop_channel)
+async def adm_set_shop_value(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not re.fullmatch(r"-?\d+", raw):
+        await message.answer("Faqat raqam. Masalan: -1001234567890 yoki 0")
+        return
+    val = "" if raw == "0" else raw
+    async with SessionLocal() as s:
+        await upsert_setting(s, "SHOP_CHANNEL_ID", val)
+        await s.commit()
+    await state.clear()
+    await message.answer(f"✅ SHOP_CHANNEL_ID set: {val or '(disabled)'}")
+
+@router_admin.callback_query(F.data == "adm_set_courier_channel")
+async def adm_set_courier_channel(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id):
+        return
+    await state.set_state(AdminStates.set_courier_channel)
+    await cb.message.answer("COURIER_CHANNEL_ID yuboring (masalan: -1001234567890) yoki 0 (o‘chirish).")
+    await cb.answer()
+
+@router_admin.message(AdminStates.set_courier_channel)
+async def adm_set_courier_channel_value(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not re.fullmatch(r"-?\d+", raw):
+        await message.answer("Faqat raqam. Masalan: -1001234567890 yoki 0")
+        return
+    val = "" if raw == "0" else raw
+    async with SessionLocal() as s:
+        await upsert_setting(s, "COURIER_CHANNEL_ID", val)
+        await s.commit()
+    await state.clear()
+    await message.answer(f"✅ COURIER_CHANNEL_ID set: {val or '(disabled)'}")
+
+# -------- Admin: active orders list --------
+
+@router_admin.callback_query(F.data == "adm_active_orders")
+async def adm_active_orders(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    async with SessionLocal() as s:
+        orders = await active_orders(s)
+        if not orders:
+            await cb.message.edit_text("Актив buyurtmalar yo‘q.", reply_markup=admin_menu_kb())
+            await cb.answer()
+            return
+        lines = []
+        for o in orders[:25]:
+            lines.append(f"🆔 {o.order_number} | {money(o.total)} | {STATUS_LABELS[OrderStatus(o.status)]}")
+        await cb.message.edit_text(
+            "📦 Aktiv buyurtmalar:\n" + "\n".join(lines),
+            reply_markup=admin_menu_kb()
+        )
+    await cb.answer()
+
+# -------- Admin: couriers manage (add/list/toggle) --------
+
+@router_admin.callback_query(F.data == "adm_couriers")
+async def adm_couriers(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    async with SessionLocal() as s:
+        q = await s.execute(select(Courier).order_by(Courier.created_at.desc()))
+        couriers = list(q.scalars().all())
+
+    kb_rows = [[InlineKeyboardButton(text="➕ Add courier", callback_data="adm_add_courier")]]
+    for c in couriers[:20]:
+        status = "✅" if c.is_active else "⛔"
+        kb_rows.append([
+            InlineKeyboardButton(text=f"{status} {c.name} ({c.chat_id})", callback_data=f"adm_toggle_courier:{c.id}")
+        ])
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data="adm_back")])
+
+    await cb.message.edit_text("🚴 Kuryerlar:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await cb.answer()
+
+@router_admin.callback_query(F.data == "adm_add_courier")
+async def adm_add_courier(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id):
+        return
+    await state.set_state(AdminStates.add_courier_chat_id)
+    await cb.message.answer("Kuryer chat_id yuboring (masalan: 123456789).")
+    await cb.answer()
+
+@router_admin.message(AdminStates.add_courier_chat_id)
+async def adm_add_courier_chat_id(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not re.fullmatch(r"-?\d+", raw):
+        await message.answer("Faqat raqam chat_id.")
+        return
+    await state.update_data(chat_id=int(raw))
+    await state.set_state(AdminStates.add_courier_name)
+    await message.answer("Kuryer nomini yuboring (masalan: Bobur).")
+
+@router_admin.message(AdminStates.add_courier_name)
+async def adm_add_courier_name(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    name = (message.text or "").strip()[:64]
+    data = await state.get_data()
+    chat_id = int(data["chat_id"])
+    async with SessionLocal() as s:
+        q = await s.execute(select(Courier).where(Courier.chat_id == chat_id))
+        existing = q.scalar_one_or_none()
+        if existing:
+            existing.name = name
+            existing.is_active = True
+        else:
+            s.add(Courier(chat_id=chat_id, name=name, is_active=True))
+        await s.commit()
+    await state.clear()
+    await message.answer("✅ Kuryer qo‘shildi/yangilandi. /admin -> Kuryerlar")
+
+@router_admin.callback_query(F.data.startswith("adm_toggle_courier:"))
+async def adm_toggle_courier(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    cid = int(cb.data.split(":")[1])
+    async with SessionLocal() as s:
+        c = await s.get(Courier, cid)
+        if c:
+            c.is_active = not c.is_active
+            await s.commit()
+    await cb.answer("OK")
+    # refresh
+    await adm_couriers(cb)
+
+# -------- Admin: promos create/list --------
+
+@router_admin.callback_query(F.data == "adm_promos")
+async def adm_promos(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    async with SessionLocal() as s:
+        q = await s.execute(select(Promo).order_by(Promo.id.desc()).limit(20))
+        promos = list(q.scalars().all())
+    lines = []
+    for p in promos:
+        exp = fmt_dt(p.expires_at) if p.expires_at else "∞"
+        lim = p.usage_limit if p.usage_limit else "∞"
+        lines.append(f"• {p.code} | -{p.discount_percent}% | exp: {exp} | used: {p.used_count}/{lim}")
+    await cb.message.edit_text(
+        "🎁 Promokodlar:\n" + ("\n".join(lines) if lines else "Hozircha yo‘q."),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Create promo", callback_data="adm_create_promo")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="adm_back")],
+        ])
+    )
+    await cb.answer()
+
+@router_admin.callback_query(F.data == "adm_create_promo")
+async def adm_create_promo(cb: CallbackQuery, state: FSMContext):
+    if not is_admin(cb.from_user.id):
+        return
+    await state.set_state(AdminStates.create_promo_code)
+    await cb.message.answer("Promo code yuboring (masalan: FIESTA10).")
+    await cb.answer()
+
+@router_admin.message(AdminStates.create_promo_code)
+async def adm_create_promo_code(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    code = (message.text or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_\-]{4,32}", code):
+        await message.answer("Code formati xato. (A-Z0-9_-), 4..32")
+        return
+    await state.update_data(code=code)
+    await state.set_state(AdminStates.create_promo_discount)
+    await message.answer("Discount % yuboring (1..90).")
+
+@router_admin.message(AdminStates.create_promo_discount)
+async def adm_create_promo_discount(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Faqat raqam 1..90")
+        return
+    disc = int(raw)
+    if disc < 1 or disc > 90:
+        await message.answer("1..90 oralig‘ida.")
+        return
+    await state.update_data(discount=disc)
+    await state.set_state(AdminStates.create_promo_expires_days)
+    await message.answer("Necha kunga amal qiladi? (masalan 30) yoki 0 (cheksiz).")
+
+@router_admin.message(AdminStates.create_promo_expires_days)
+async def adm_create_promo_expires(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Faqat raqam.")
+        return
+    days = int(raw)
+    await state.update_data(expires_days=days)
+    await state.set_state(AdminStates.create_promo_usage_limit)
+    await message.answer("Usage limit? (masalan 10) yoki 0 (cheksiz).")
+
+@router_admin.message(AdminStates.create_promo_usage_limit)
+async def adm_create_promo_limit(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Faqat raqam.")
+        return
+    limit = int(raw)
+    data = await state.get_data()
+    code = data["code"]
+    disc = int(data["discount"])
+    days = int(data["expires_days"])
+
+    expires_at = None if days == 0 else now_utc() + timedelta(days=days)
+    async with SessionLocal() as s:
+        q = await s.execute(select(Promo).where(Promo.code == code))
+        if q.scalar_one_or_none():
+            await message.answer("Bu code allaqachon bor.")
+            return
+        s.add(Promo(code=code, discount_percent=disc, expires_at=expires_at, usage_limit=limit, used_count=0, is_active=True))
+        await s.commit()
+
+    await state.clear()
+    await message.answer("✅ Promo yaratildi. /admin -> Promokodlar")
+
+# =========================================================
+# ADMIN STATUS CALLBACKS + COURIER ASSIGN FLOW
+# =========================================================
+
+async def edit_admin_post(bot: Bot, shop_channel_id: int, order: Order, user: User, items: List[OrderItem]):
+    if not order.admin_channel_message_id:
+        return
     try:
-        async with AsyncSessionLocal() as session:
-            # Order items olish
-            result = await session.execute(
-                select(OrderItem).where(OrderItem.order_id == order.id)
-            )
-            items = result.scalars().all()
-            
-            items_text = ""
-            for item in items:
-                items_text += f"• {item.name_snapshot} x{item.qty}\n"
-            
-            location_link = f"https://maps.google.com/?q={order.location_lat},{order.location_lng}"
-            yandex_link = f"https://yandex.ru/maps/?pt={order.location_lng},{order.location_lat}&z=16"
-            
-            courier_text = (
-                f"🚴 <b>НОВЫЙ ЗАКАЗ ДЛЯ ДОСТАВКИ</b>\n\n"
-                f"🆔 <b>Номер заказа:</b> {order.order_number}\n"
-                f"👤 <b>Клиент:</b> {order.customer_name}\n"
-                f"📞 <b>Телефон:</b> {order.phone}\n"
-                f"💰 <b>Сумма:</b> {format_price(order.total)} сум\n\n"
-                f"📍 <b>Локация:</b>\n"
-                f"• Google Maps: <a href='{location_link}'>Открыть</a>\n"
-                f"• Яндекс.Карты: <a href='{yandex_link}'>Открыть</a>\n\n"
-                f"🍽️ <b>Состав заказа:</b>\n{items_text}\n"
-                f"💬 <b>Комментарий:</b>\n{order.comment if order.comment else 'нет'}\n\n"
-                f"⏰ <b>Время заказа:</b> {order.created_at.strftime('%H:%M')}\n\n"
-                f"<i>Подтвердите получение заказа нажав кнопку ниже ⬇️</i>"
-            )
-            
-            # Kuryer kanaliga yuborish
-            if COURIER_CHANNEL_ID:
-                await bot.send_message(
-                    chat_id=COURIER_CHANNEL_ID,
-                    text=courier_text,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True
-                )
-            
-            # Kuryerga shaxsiy xabar
+        await bot.edit_message_text(
+            chat_id=shop_channel_id,
+            message_id=order.admin_channel_message_id,
+            text=admin_order_post_text(user, order, items),
+            reply_markup=(None if OrderStatus(order.status) in [OrderStatus.DELIVERED, OrderStatus.CANCELED] else admin_inline_kb_for_order(order.id))
+        )
+    except TelegramBadRequest:
+        # message might be too old or not editable; ignore
+        pass
+
+@router_admin.callback_query(F.data.startswith("adm_status:"))
+async def adm_set_status(cb: CallbackQuery, bot: Bot):
+    if not is_admin(cb.from_user.id):
+        return
+
+    _, order_id_s, status_s = cb.data.split(":")
+    order_id = int(order_id_s)
+    new_status = OrderStatus(status_s)
+
+    async with SessionLocal() as s:
+        order = await update_order_status(s, order_id, new_status)
+        user = await s.get(User, order.user_id)
+        items = await list_order_items(s, order.id)
+
+        shop_channel_id = await get_setting_int(s, "SHOP_CHANNEL_ID")
+        if shop_channel_id:
+            await edit_admin_post(bot, shop_channel_id, order, user, items)
+
+        # user notify
+        try:
             await bot.send_message(
-                chat_id=courier.chat_id,
-                text=courier_text,
-                reply_markup=get_courier_order_keyboard(order.id),
-                parse_mode="HTML",
-                disable_web_page_preview=True
+                chat_id=user.tg_id,
+                text=f"Статус заказа №{order.order_number} обновлён ✅\n📦 {STATUS_LABELS[new_status]}"
             )
-            
-            logger.info(f"Order {order.id} sent to courier {courier.id}")
-    
-    except Exception as e:
-        logger.error(f"Error sending order to courier: {e}")
+        except Exception:
+            pass
 
-# ========================
-# COURIER HANDLERS
-# ========================
+    await cb.answer("OK")
 
-@courier_router.callback_query(F.data.startswith("courier_accept:"))
-async def courier_accept_order(callback: CallbackQuery):
-    """Kuryer buyurtmani qabul qiladi"""
+@router_admin.callback_query(F.data.startswith("adm_courier_pick:"))
+async def adm_pick_courier(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return
+    order_id = int(cb.data.split(":")[1])
+
+    async with SessionLocal() as s:
+        q = await s.execute(select(Courier).where(Courier.is_active == True).order_by(Courier.name.asc()))
+        couriers = list(q.scalars().all())
+
+    if not couriers:
+        await cb.answer("Active kuryer yo‘q. /admin -> Kuryerlar -> Add", show_alert=True)
+        return
+
+    rows = []
+    for c in couriers:
+        rows.append([InlineKeyboardButton(text=f"🚴 {c.name}", callback_data=f"adm_assign_courier:{order_id}:{c.id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Back", callback_data="adm_back")])
+
+    await cb.message.answer(
+        f"Выберите курьера для заказа (ID={order_id})",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+    await cb.answer()
+
+@router_admin.callback_query(F.data.startswith("adm_assign_courier:"))
+async def adm_assign_courier(cb: CallbackQuery, bot: Bot):
+    if not is_admin(cb.from_user.id):
+        return
+    _, order_id_s, courier_id_s = cb.data.split(":")
+    order_id = int(order_id_s)
+    courier_id = int(courier_id_s)
+
+    async with SessionLocal() as s:
+        courier = await s.get(Courier, courier_id)
+        if not courier or not courier.is_active:
+            await cb.answer("Courier not found", show_alert=True)
+            return
+
+        order = await update_order_status(s, order_id, OrderStatus.COURIER_ASSIGNED, courier_id=courier_id)
+        user = await s.get(User, order.user_id)
+        items = await list_order_items(s, order.id)
+
+        courier_channel_id = await get_setting_int(s, "COURIER_CHANNEL_ID")
+        shop_channel_id = await get_setting_int(s, "SHOP_CHANNEL_ID")
+
+        # Send to courier (priority: personal chat_id; additionally optional courier channel)
+        text = courier_order_text(order, items)
+        sent_msg = await bot.send_message(chat_id=courier.chat_id, text=text, reply_markup=courier_kb(order.id))
+        order.courier_message_id = sent_msg.message_id
+        await s.commit()
+
+        if courier_channel_id:
+            # log copy (not required to have buttons)
+            await bot.send_message(chat_id=courier_channel_id, text=text)
+
+        # edit admin post + user notify
+        if shop_channel_id:
+            await edit_admin_post(bot, shop_channel_id, order, user, items)
+
+        try:
+            await bot.send_message(chat_id=user.tg_id, text=f"Ваш заказ №{order.order_number} назначен курьеру 🚴")
+        except Exception:
+            pass
+
+    await cb.answer("Courier assigned ✅")
+
+# =========================================================
+# COURIER HANDLERS (only registered couriers)
+# =========================================================
+
+async def courier_allowed(s: AsyncSession, tg_id: int) -> Optional[Courier]:
+    q = await s.execute(select(Courier).where(Courier.chat_id == tg_id, Courier.is_active == True))
+    return q.scalar_one_or_none()
+
+@router_courier.callback_query(F.data.startswith("courier_accept:"))
+async def courier_accept(cb: CallbackQuery, bot: Bot):
+    order_id = int(cb.data.split(":")[1])
+    async with SessionLocal() as s:
+        courier = await courier_allowed(s, cb.from_user.id)
+        if not courier:
+            await cb.answer("Siz kuryer emassiz.", show_alert=True)
+            return
+
+        order = await s.get(Order, order_id)
+        if not order or order.courier_id != courier.id:
+            await cb.answer("Order topilmadi yoki sizga tegishli emas.", show_alert=True)
+            return
+
+        order = await update_order_status(s, order_id, OrderStatus.OUT_FOR_DELIVERY)
+        user = await s.get(User, order.user_id)
+        items = await list_order_items(s, order.id)
+
+        shop_channel_id = await get_setting_int(s, "SHOP_CHANNEL_ID")
+        if shop_channel_id:
+            await edit_admin_post(bot, shop_channel_id, order, user, items)
+
+        try:
+            await bot.send_message(chat_id=user.tg_id, text=f"Ваш заказ №{order.order_number} передан курьеру 🚴")
+        except Exception:
+            pass
+
+    await cb.answer("Qabul qilindi ✅")
+
+@router_courier.callback_query(F.data.startswith("courier_delivered:"))
+async def courier_delivered(cb: CallbackQuery, bot: Bot):
+    order_id = int(cb.data.split(":")[1])
+    async with SessionLocal() as s:
+        courier = await courier_allowed(s, cb.from_user.id)
+        if not courier:
+            await cb.answer("Siz kuryer emassiz.", show_alert=True)
+            return
+
+        order = await s.get(Order, order_id)
+        if not order or order.courier_id != courier.id:
+            await cb.answer("Order topilmadi yoki sizga tegishli emas.", show_alert=True)
+            return
+
+        order = await update_order_status(s, order_id, OrderStatus.DELIVERED)
+        user = await s.get(User, order.user_id)
+        items = await list_order_items(s, order.id)
+
+        shop_channel_id = await get_setting_int(s, "SHOP_CHANNEL_ID")
+        if shop_channel_id:
+            await edit_admin_post(bot, shop_channel_id, order, user, items)
+
+        # remove courier buttons
+        try:
+            await cb.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        try:
+            await bot.send_message(chat_id=user.tg_id, text=f"Ваш заказ №{order.order_number} успешно доставлен 🎉 Спасибо!")
+        except Exception:
+            pass
+
+    await cb.answer("Yetkazildi ✅")
+
+# =========================================================
+# FASTAPI (foods/categories/promo validate)
+# =========================================================
+
+api = FastAPI(title="FIESTA API", version="1.0.0")
+
+async def require_tg_user(init_data: str) -> Dict[str, Any]:
     try:
-        order_id = int(callback.data.split(":")[1])
-        
-        async with AsyncSessionLocal() as session:
-            # Order ni olish
-            order_result = await session.execute(
-                select(Order).where(Order.id == order_id)
-            )
-            order = order_result.scalar_one()
-            
-            # Kuryer ekanligini tekshirish
-            courier_result = await session.execute(
-                select(Courier).where(Courier.chat_id == callback.from_user.id)
-            )
-            courier = courier_result.scalar_one_or_none()
-            
-            if not courier or order.courier_id != courier.id:
-                await callback.answer("Этот заказ не назначен вам", show_alert=True)
-                return
-            
-            # Statusni yangilash
-            order.status = "OUT_FOR_DELIVERY"
-            order.updated_at = datetime.now(TIMEZONE)
-            await session.commit()
-            
-            # Admin xabarni yangilash
-            await update_order_message(order)
-            
-            # Userga xabar
-            # User ni topish
-            user_result = await session.execute(
-                select(User).where(User.id == order.user_id)
-            )
-            user = user_result.scalar_one_or_none()
-            
-            if user:
-                await bot.send_message(
-                    chat_id=user.tg_id,
-                    text=f"🚴 <b>Курьер принял ваш заказ №{order.order_number}!</b>\n\n"
-                         f"Имя курьера: <b>{courier.name}</b>\n"
-                         "Заказ уже в пути к вам! Ожидайте доставку.",
-                    parse_mode="HTML"
-                )
-            
-            await callback.answer("Заказ принят в доставку")
-            
-            # Xabarni yangilash
-            await callback.message.edit_text(
-                f"✅ <b>Вы приняли заказ №{order.order_number}</b>\n\n"
-                f"Статус: <b>В пути</b>\n"
-                f"Клиент: <b>{order.customer_name}</b>\n"
-                f"Телефон: <b>{order.phone}</b>\n\n"
-                f"<i>После доставки нажмите кнопку 'Доставлен'</i>",
-                parse_mode="HTML",
-                reply_markup=get_courier_order_keyboard(order.id)
-            )
-    
+        verify_telegram_init_data(init_data, CONFIG.BOT_TOKEN)
+        user = parse_user_from_init_data(init_data)
+        return user
     except Exception as e:
-        logger.error(f"Error in courier_accept_order: {e}")
-        await callback.answer("Ошибка при принятии заказа", show_alert=True)
+        raise HTTPException(status_code=401, detail=f"initData invalid: {e}")
 
-@courier_router.callback_query(F.data.startswith("courier_delivered:"))
-async def courier_delivered_order(callback: CallbackQuery):
-    """Kuryer buyurtmani yetkazdi"""
-    try:
-        order_id = int(callback.data.split(":")[1])
-        
-        async with AsyncSessionLocal() as session:
-            # Order ni olish
-            order_result = await session.execute(
-                select(Order).where(Order.id == order_id)
-            )
-            order = order_result.scalar_one()
-            
-            # Kuryer ekanligini tekshirish
-            courier_result = await session.execute(
-                select(Courier).where(Courier.chat_id == callback.from_user.id)
-            )
-            courier = courier_result.scalar_one_or_none()
-            
-            if not courier or order.courier_id != courier.id:
-                await callback.answer("Этот заказ не назначен вам", show_alert=True)
-                return
-            
-            # Statusni yangilash
-            order.status = "DELIVERED"
-            order.delivered_at = datetime.now(TIMEZONE)
-            order.updated_at = datetime.now(TIMEZONE)
-            await session.commit()
-            
-            # Referral statistikani yangilash
-            await update_referral_stats(order.user_id, order_delivered=True)
-            
-            # Admin xabarni yangilash
-            await update_order_message(order)
-            
-            # Userga xabar
-            # User ni topish
-            user_result = await session.execute(
-                select(User).where(User.id == order.user_id)
-            )
-            user = user_result.scalar_one_or_none()
-            
-            if user:
-                await bot.send_message(
-                    chat_id=user.tg_id,
-                    text=f"🎉 <b>Ваш заказ №{order.order_number} успешно доставлен!</b>\n\n"
-                         f"💰 Сумма: <b>{format_price(order.total)} сум</b>\n"
-                         f"🚴 Курьер: <b>{courier.name}</b>\n"
-                         f"🕒 Время доставки: <b>{order.delivered_at.strftime('%H:%M')}</b>\n\n"
-                         "Спасибо за заказ! Ждем вас снова! 🍽️",
-                    parse_mode="HTML"
-                )
-            
-            await callback.answer("Заказ доставлен успешно")
-            
-            # Xabarni yangilash
-            await callback.message.edit_text(
-                f"✅ <b>Заказ №{order.order_number} доставлен!</b>\n\n"
-                f"Клиент: <b>{order.customer_name}</b>\n"
-                f"Сумма: <b>{format_price(order.total)} сум</b>\n"
-                f"Время доставки: <b>{order.delivered_at.strftime('%H:%M')}</b>\n\n"
-                "<i>Спасибо за работу! 💪</i>",
-                parse_mode="HTML",
-                reply_markup=None
-            )
-    
-    except Exception as e:
-        logger.error(f"Error in courier_delivered_order: {e}")
-        await callback.answer("Ошибка при подтверждении доставки", show_alert=True)
+@api.get("/api/health")
+async def health():
+    return {"ok": True, "ts": fmt_dt(now_utc())}
 
-# ========================
-# BACK BUTTONS
-# ========================
+@api.get("/api/categories")
+async def api_categories(x_tg_init_data: str = Header(default="")):
+    await require_tg_user(x_tg_init_data)
+    async with SessionLocal() as s:
+        q = await s.execute(select(Category).where(Category.is_active == True).order_by(Category.name.asc()))
+        cats = [{"id": c.id, "name": c.name} for c in q.scalars().all()]
+    return {"categories": cats}
 
-@admin_router.callback_query(F.data.startswith("back_to_order:"))
-async def back_to_order(callback: CallbackQuery):
-    """Buyurtmaga qaytish"""
-    order_id = int(callback.data.split(":")[1])
-    
-    try:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Order).where(Order.id == order_id)
-            )
-            order = result.scalar_one()
-            
-            # Order items olish
-            items_result = await session.execute(
-                select(OrderItem).where(OrderItem.order_id == order.id)
-            )
-            items = items_result.scalars().all()
-            
-            items_text = ""
-            for item in items:
-                items_text += f"• {item.name_snapshot} x{item.qty} = {format_price(item.line_total)} сум\n"
-            
-            location_link = f"https://maps.google.com/?q={order.location_lat},{order.location_lng}"
-            
-            order_text = (
-                f"📦 <b>Заказ №{order.order_number}</b>\n\n"
-                f"👤 <b>Клиент:</b> {order.customer_name}\n"
-                f"📞 <b>Телефон:</b> {order.phone}\n"
-                f"💰 <b>Сумма:</b> {format_price(order.total)} сум\n"
-                f"📊 <b>Статус:</b> {order.status}\n"
-                f"📍 <b>Локация:</b> <a href='{location_link}'>На карте</a>\n\n"
-                f"🍽️ <b>Заказ:</b>\n{items_text}"
-            )
-            
-            await callback.message.edit_text(
-                order_text,
-                reply_markup=get_order_status_keyboard(order.id),
-                parse_mode="HTML",
-                disable_web_page_preview=True
-            )
-    
-    except Exception as e:
-        logger.error(f"Error in back_to_order: {e}")
-        await callback.answer("Ошибка", show_alert=True)
+@api.get("/api/foods")
+async def api_foods(
+    x_tg_init_data: str = Header(default=""),
+    category_id: Optional[int] = None,
+    q: Optional[str] = None,
+    sort: Optional[str] = None,  # rating_desc, created_desc, price_asc, price_desc
+):
+    await require_tg_user(x_tg_init_data)
+    async with SessionLocal() as s:
+        stmt = select(Food, Category).join(Category, Food.category_id == Category.id).where(Food.is_active == True, Category.is_active == True)
 
-@admin_router.callback_query(F.data.startswith("back_to_status:"))
-async def back_to_status(callback: CallbackQuery):
-    """Status sahifasiga qaytish"""
-    order_id = int(callback.data.split(":")[1])
-    
-    try:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Order).where(Order.id == order_id)
-            )
-            order = result.scalar_one()
-            
-            # Order items olish
-            items_result = await session.execute(
-                select(OrderItem).where(OrderItem.order_id == order.id)
-            )
-            items = items_result.scalars().all()
-            
-            items_text = ""
-            for item in items:
-                items_text += f"• {item.name_snapshot} x{item.qty} = {format_price(item.line_total)} сум\n"
-            
-            location_link = f"https://maps.google.com/?q={order.location_lat},{order.location_lng}"
-            
-            order_text = (
-                f"📦 <b>Заказ №{order.order_number}</b>\n\n"
-                f"👤 <b>Клиент:</b> {order.customer_name}\n"
-                f"📞 <b>Телефон:</b> {order.phone}\n"
-                f"💰 <b>Сумма:</b> {format_price(order.total)} сум\n"
-                f"📊 <b>Статус:</b> {order.status}\n"
-                f"📍 <b>Локация:</b> <a href='{location_link}'>На карте</a>\n\n"
-                f"🍽️ <b>Заказ:</b>\n{items_text}"
-            )
-            
-            await callback.message.edit_text(
-                order_text,
-                reply_markup=get_order_status_keyboard(order.id),
-                parse_mode="HTML",
-                disable_web_page_preview=True
-            )
-    
-    except Exception as e:
-        logger.error(f"Error in back_to_status: {e}")
-        await callback.answer("Ошибка", show_alert=True)
+        if category_id:
+            stmt = stmt.where(Food.category_id == category_id)
+        if q:
+            like = f"%{q.strip()}%"
+            stmt = stmt.where(Food.name.ilike(like))
 
-# ========================
-# MAIN FUNCTION
-# ========================
+        if sort == "rating_desc":
+            stmt = stmt.order_by(Food.rating.desc(), Food.id.desc())
+        elif sort == "created_desc":
+            stmt = stmt.order_by(Food.created_at.desc())
+        elif sort == "price_asc":
+            stmt = stmt.order_by(Food.price.asc())
+        elif sort == "price_desc":
+            stmt = stmt.order_by(Food.price.desc())
+        else:
+            stmt = stmt.order_by(Food.id.desc())
+
+        res = await s.execute(stmt.limit(300))
+        foods = []
+        for f, c in res.all():
+            foods.append({
+                "id": f.id,
+                "category_id": f.category_id,
+                "category_name": c.name,
+                "name": f.name,
+                "description": f.description,
+                "price": f.price,
+                "rating": f.rating,
+                "is_new": f.is_new,
+                "image_url": f.image_url,
+                "created_at": f.created_at.isoformat(),
+            })
+    return {"foods": foods}
+
+@api.get("/api/promo/validate")
+async def api_promo_validate(x_tg_init_data: str = Header(default=""), code: str = ""):
+    await require_tg_user(x_tg_init_data)
+    async with SessionLocal() as s:
+        promo = await validate_promo(s, code)
+        if not promo:
+            return {"ok": False}
+        return {
+            "ok": True,
+            "code": promo.code,
+            "discount_percent": promo.discount_percent,
+            "expires_at": promo.expires_at.isoformat() if promo.expires_at else None,
+            "usage_limit": promo.usage_limit,
+            "used_count": promo.used_count,
+        }
+
+# =========================================================
+# BOOTSTRAP: run bot + api in one process
+# =========================================================
+
+async def start_bot():
+    bot = Bot(CONFIG.BOT_TOKEN)
+    storage = RedisStorage.from_url(CONFIG.REDIS_URL)
+    dp = Dispatcher(storage=storage)
+    dp.include_router(router_client)
+    dp.include_router(router_admin)
+    dp.include_router(router_courier)
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Bot polling started")
+    await dp.start_polling(bot)
+
+async def start_api():
+    # If you run on Railway, they usually set PORT
+    port = int(os.getenv("PORT", "8000"))
+    host = os.getenv("HOST", "0.0.0.0")
+    config = uvicorn.Config(api, host=host, port=port, log_level="info")
+    server = uvicorn.Server(config)
+    logger.info("API server started")
+    await server.serve()
 
 async def main():
-    """Asosiy funksiya"""
-    try:
-        # Database initialization
-        await init_db()
-        
-        # Routerlarni qo'shish
-        dp.include_router(client_router)
-        dp.include_router(admin_router)
-        dp.include_router(courier_router)
-        
-        logger.info("=" * 50)
-        logger.info("FIESTA Food Delivery Bot starting...")
-        logger.info(f"Bot ID: {bot.id}")
-        logger.info(f"Admins: {ADMIN_IDS}")
-        logger.info(f"Shop Channel: {SHOP_CHANNEL_ID}")
-        logger.info(f"Courier Channel: {COURIER_CHANNEL_ID}")
-        logger.info(f"WebApp URL: {WEBAPP_URL}")
-        logger.info("=" * 50)
-        
-        # Start polling
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-        
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-    finally:
-        await bot.session.close()
+    await db_init()
+    # Run both concurrently:
+    await asyncio.gather(
+        start_api(),
+        start_bot(),
+    )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
