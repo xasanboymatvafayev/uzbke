@@ -3,6 +3,7 @@
 """
 FIESTA FOOD DELIVERY BOT - PRODUCTION READY
 Python 3.11+ | aiogram 3.x | PostgreSQL | Redis | FastAPI
+WEBHOOK MODE for Railway/Heroku/Render deployment
 """
 
 import asyncio
@@ -20,7 +21,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, Update
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -52,7 +53,12 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRt
 SHOP_CHANNEL_ID = int(os.getenv("SHOP_CHANNEL_ID", "-1003530497437"))
 COURIER_CHANNEL_ID = int(os.getenv("COURIER_CHANNEL_ID", "-1003707946746"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mainsufooduz.vercel.app")
-API_PORT = int(os.getenv("API_PORT", "8000"))
+PORT = int(os.getenv("PORT", "8000"))
+
+# Webhook configuration
+WEBHOOK_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", os.getenv("RENDER_EXTERNAL_HOSTNAME", "uzbke-production.up.railway.app"))
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+WEBHOOK_URL = f"https://{WEBHOOK_DOMAIN}{WEBHOOK_PATH}"
 
 # Logging
 logging.basicConfig(
@@ -109,7 +115,7 @@ class Order(Base):
     phone = Column(String(50), nullable=False)
     comment = Column(Text)
     total = Column(Float, nullable=False)
-    status = Column(String(50), default="NEW")  # NEW, CONFIRMED, COOKING, COURIER_ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, CANCELED
+    status = Column(String(50), default="NEW")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     delivered_at = Column(DateTime, nullable=True)
@@ -138,7 +144,7 @@ class Promo(Base):
     __tablename__ = "promos"
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(50), unique=True, nullable=False, index=True)
-    discount_percent = Column(Integer, nullable=False)  # 1-90
+    discount_percent = Column(Integer, nullable=False)
     expires_at = Column(DateTime, nullable=True)
     usage_limit = Column(Integer, default=1)
     used_count = Column(Integer, default=0)
@@ -160,9 +166,13 @@ async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_
 
 async def init_db():
     """Initialize database tables"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("✅ Database initialized")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("✅ Database initialized")
+    except Exception as e:
+        logger.error(f"❌ Database initialization error: {e}")
+        raise
 
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:
@@ -189,7 +199,6 @@ class AdminCourierAdd(StatesGroup):
 
 # ==================== SERVICES ====================
 
-# User Service
 async def get_or_create_user(session: AsyncSession, tg_id: int, username: str = None, full_name: str = None, ref_by: int = None) -> User:
     result = await session.execute(select(User).where(User.tg_id == tg_id))
     user = result.scalar_one_or_none()
@@ -208,21 +217,17 @@ async def get_or_create_user(session: AsyncSession, tg_id: int, username: str = 
     
     return user
 
-# Referral Service
 async def get_referral_stats(session: AsyncSession, user_id: int) -> Dict:
-    # Count referrals
     ref_result = await session.execute(
         select(func.count(User.id)).where(User.ref_by_user_id == user_id)
     )
     ref_count = ref_result.scalar() or 0
     
-    # Get referred user IDs
     referred_users_result = await session.execute(
         select(User.tg_id).where(User.ref_by_user_id == user_id)
     )
     referred_user_tg_ids = [row[0] for row in referred_users_result.all()]
     
-    # Count orders from referred users
     orders_result = await session.execute(
         select(func.count(Order.id)).where(Order.user_id.in_(
             select(User.id).where(User.tg_id.in_(referred_user_tg_ids))
@@ -230,7 +235,6 @@ async def get_referral_stats(session: AsyncSession, user_id: int) -> Dict:
     )
     orders_count = orders_result.scalar() or 0
     
-    # Count delivered/paid orders
     delivered_result = await session.execute(
         select(func.count(Order.id)).where(
             Order.user_id.in_(select(User.id).where(User.tg_id.in_(referred_user_tg_ids))),
@@ -259,7 +263,6 @@ async def create_referral_promo(session: AsyncSession, user: User) -> Promo:
     await session.refresh(promo)
     return promo
 
-# Food Service
 async def get_categories(session: AsyncSession) -> List[Category]:
     result = await session.execute(select(Category).where(Category.is_active == True))
     return result.scalars().all()
@@ -271,7 +274,6 @@ async def get_foods_by_category(session: AsyncSession, category_id: int = None) 
     result = await session.execute(query.order_by(Food.created_at.desc()))
     return result.scalars().all()
 
-# Promo Service
 async def validate_promo(session: AsyncSession, code: str) -> Optional[Dict]:
     result = await session.execute(select(Promo).where(Promo.code == code, Promo.is_active == True))
     promo = result.scalar_one_or_none()
@@ -296,9 +298,7 @@ async def use_promo(session: AsyncSession, code: str):
     )
     await session.commit()
 
-# Order Service
 async def create_order(session: AsyncSession, user_id: int, data: Dict) -> Order:
-    # Generate order number
     last_order = await session.execute(select(Order).order_by(Order.id.desc()).limit(1))
     last = last_order.scalar_one_or_none()
     order_number = f"ORD{(last.id + 1 if last else 1):06d}"
@@ -317,7 +317,6 @@ async def create_order(session: AsyncSession, user_id: int, data: Dict) -> Order
     session.add(order)
     await session.flush()
     
-    # Create order items
     for item in data["items"]:
         order_item = OrderItem(
             order_id=order.id,
@@ -356,12 +355,10 @@ async def update_order_status(session: AsyncSession, order_id: int, status: str,
     await session.execute(update(Order).where(Order.id == order_id).values(**values))
     await session.commit()
 
-# Courier Service
 async def get_active_couriers(session: AsyncSession) -> List[Courier]:
     result = await session.execute(select(Courier).where(Courier.is_active == True))
     return result.scalars().all()
 
-# Stats Service
 async def get_stats(session: AsyncSession, period: str = "today") -> Dict:
     now = datetime.utcnow()
     
@@ -385,7 +382,6 @@ async def get_stats(session: AsyncSession, period: str = "today") -> Dict:
     delivered_count = len([o for o in orders if o.status == "DELIVERED"])
     revenue = sum(o.total for o in orders if o.status == "DELIVERED")
     
-    # Active orders
     active_result = await session.execute(
         select(func.count(Order.id)).where(Order.status.in_(["NEW", "CONFIRMED", "COOKING", "COURIER_ASSIGNED", "OUT_FOR_DELIVERY"]))
     )
@@ -399,7 +395,6 @@ async def get_stats(session: AsyncSession, period: str = "today") -> Dict:
         "active_orders": active_count
     }
 
-# Telegram Notify Service
 async def notify_user(bot: Bot, tg_id: int, text: str):
     try:
         await bot.send_message(tg_id, text)
@@ -443,7 +438,6 @@ async def update_admin_post(bot: Bot, message_id: int, order: Order, items: List
 📝 <b>Комментарий:</b> {order.comment or 'Нет'}
 """
     
-    # Build keyboard based on status
     keyboard = []
     if order.status == "NEW":
         keyboard.append([
@@ -517,7 +511,6 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     async with async_session_maker() as session:
-        # Check referral
         args = message.text.split()
         ref_by = None
         if len(args) > 1:
@@ -560,7 +553,6 @@ async def my_orders(message: Message):
         
         text = "📦 <b>Ваши заказы:</b>\n\n"
         for order in orders:
-            # Get items
             items_result = await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))
             items = items_result.scalars().all()
             items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty}" for item in items])
@@ -618,36 +610,29 @@ async def referral(message: Message):
 Пригласите трех человек и вы получите от нас промо-код со скидкой 15%
 """
         
-        # Check if eligible for promo
         if stats['ref_count'] >= 3 and not user.promo_given:
             promo = await create_referral_promo(session, user)
             text += f"\n\n🎉 <b>Поздравляем!</b> Вы получили промокод: <code>{promo.code}</code>"
         
         await message.answer(text, parse_mode="HTML")
 
-# WebApp Data Handler
 @router.message(F.web_app_data)
 async def webapp_data(message: Message):
     try:
         data = json.loads(message.web_app_data.data)
         
         if data.get("type") == "order_create":
-            # Validate total
             if data["total"] < 50000:
                 await message.answer("❌ Минимальная сумма заказа: 50,000 сум")
                 return
             
             async with async_session_maker() as session:
                 user = await get_or_create_user(session, message.from_user.id)
-                
-                # Create order
                 order = await create_order(session, user.id, data)
                 
-                # Get items for display
                 items_result = await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))
                 items = items_result.scalars().all()
                 
-                # Notify user
                 items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty} = {item.line_total:,.0f} сум" for item in items])
                 await message.answer(
                     f"Ваш заказ принят ✅\n\n"
@@ -657,7 +642,6 @@ async def webapp_data(message: Message):
                     f"🍽️ Заказ:\n{items_text}"
                 )
                 
-                # Send to admin channel
                 admin_text = f"""🆕 <b>Новый заказ №{order.order_number}</b>
 
 👤 <b>Пользователь:</b> {order.customer_name} (@{message.from_user.username or 'no_username'})
@@ -689,7 +673,6 @@ async def webapp_data(message: Message):
                     parse_mode="HTML"
                 )
                 
-                # Save admin message ID
                 await session.execute(
                     update(Order).where(Order.id == order.id).values(admin_message_id=admin_msg.message_id)
                 )
@@ -859,7 +842,6 @@ async def order_confirm(callback: CallbackQuery):
     async with async_session_maker() as session:
         await update_order_status(session, order_id, "CONFIRMED")
         
-        # Get order and items
         order_result = await session.execute(select(Order).where(Order.id == order_id))
         order = order_result.scalar_one_or_none()
         
@@ -869,11 +851,9 @@ async def order_confirm(callback: CallbackQuery):
         user_result = await session.execute(select(User).where(User.id == order.user_id))
         user = user_result.scalar_one_or_none()
         
-        # Update admin post
         if order.admin_message_id:
             await update_admin_post(bot, order.admin_message_id, order, items)
         
-        # Notify user
         await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} подтвержден ✅")
         
         await callback.answer("✅ Заказ подтвержден")
@@ -945,7 +925,6 @@ async def assign_courier(callback: CallbackQuery):
     async with async_session_maker() as session:
         await update_order_status(session, order_id, "COURIER_ASSIGNED", courier_id)
         
-        # Get order, items, courier
         order_result = await session.execute(select(Order).where(Order.id == order_id))
         order = order_result.scalar_one_or_none()
         
@@ -958,11 +937,9 @@ async def assign_courier(callback: CallbackQuery):
         user_result = await session.execute(select(User).where(User.id == order.user_id))
         user = user_result.scalar_one_or_none()
         
-        # Update admin post
         if order.admin_message_id:
             await update_admin_post(bot, order.admin_message_id, order, items)
         
-        # Send to courier
         items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty}" for item in items])
         courier_text = f"""🚴 <b>Новый заказ №{order.order_number}</b>
 
@@ -993,7 +970,6 @@ async def assign_courier(callback: CallbackQuery):
             parse_mode="HTML"
         )
         
-        # Notify user
         await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} назначен курьеру 🚴")
         
         await callback.message.edit_text(
@@ -1010,7 +986,6 @@ async def courier_accept(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
     
     async with async_session_maker() as session:
-        # Check if courier exists
         courier_result = await session.execute(select(Courier).where(Courier.chat_id == callback.from_user.id))
         courier = courier_result.scalar_one_or_none()
         
@@ -1029,11 +1004,9 @@ async def courier_accept(callback: CallbackQuery):
         user_result = await session.execute(select(User).where(User.id == order.user_id))
         user = user_result.scalar_one_or_none()
         
-        # Update admin post
         if order.admin_message_id:
             await update_admin_post(bot, order.admin_message_id, order, items)
         
-        # Notify user
         await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} передан курьеру 🚴")
         
         await callback.answer("✅ Qabul qilindi")
@@ -1061,14 +1034,11 @@ async def courier_delivered(callback: CallbackQuery):
         user_result = await session.execute(select(User).where(User.id == order.user_id))
         user = user_result.scalar_one_or_none()
         
-        # Update admin post (mark as delivered, remove buttons)
         if order.admin_message_id:
             await update_admin_post(bot, order.admin_message_id, order, items)
         
-        # Notify user
         await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} успешно доставлен 🎉\n\nСпасибо!")
         
-        # Remove buttons from courier message
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.answer("✅ Yetkazildi!")
 
@@ -1083,51 +1053,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def verify_telegram_webapp_data(init_data: str) -> Optional[Dict]:
-    """Verify Telegram WebApp initData"""
-    try:
-        parsed = parse_qs(init_data)
-        hash_str = parsed.get('hash', [''])[0]
-        
-        if not hash_str:
-            return None
-        
-        # Remove hash from data
-        data_check_arr = []
-        for key, value in parsed.items():
-            if key != 'hash':
-                data_check_arr.append(f"{key}={value[0]}")
-        
-        data_check_arr.sort()
-        data_check_string = '\n'.join(data_check_arr)
-        
-        # Create secret key
-        secret_key = hmac.new(
-            "WebAppData".encode(),
-            BOT_TOKEN.encode(),
-            hashlib.sha256
-        ).digest()
-        
-        # Calculate hash
-        calculated_hash = hmac.new(
-            secret_key,
-            data_check_string.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        
-        if calculated_hash != hash_str:
-            return None
-        
-        # Parse user data
-        user_json = parsed.get('user', [''])[0]
-        if user_json:
-            return json.loads(unquote(user_json))
-        
-        return None
-        
-    except Exception as e:
-        logger.error(f"WebApp data verification error: {e}")
-        return None
+@app.get("/")
+async def root():
+    return {"status": "FIESTA Food Delivery API", "version": "1.0.0", "webhook": WEBHOOK_URL}
 
 @app.get("/api/health")
 async def health():
@@ -1167,130 +1095,159 @@ async def api_validate_promo(request: Request, session: AsyncSession = Depends(g
     
     return promo
 
+# Webhook endpoint
+@app.post(WEBHOOK_PATH)
+async def webhook_handler(request: Request):
+    """Handle incoming updates from Telegram"""
+    try:
+        update_data = await request.json()
+        telegram_update = Update(**update_data)
+        await dp.feed_update(bot, telegram_update)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"ok": False, "error": str(e)}
+
 # ==================== DEMO DATA SEEDER ====================
 async def seed_demo_data():
     """Seed demo categories and foods"""
-    async with async_session_maker() as session:
-        # Check if data exists
-        result = await session.execute(select(Category))
-        if result.scalars().first():
-            logger.info("✅ Demo data already exists")
-            return
-        
-        # Categories
-        categories_data = [
-            "Lavash", "Burger", "Xaggi", "Shaurma", "Hotdog", "Combo", "Sneki", "Sous", "Napitki"
-        ]
-        
-        categories = []
-        for name in categories_data:
-            cat = Category(name=name, is_active=True)
-            session.add(cat)
-            categories.append(cat)
-        
-        await session.flush()
-        
-        # Foods (3 per category)
-        foods_data = {
-            "Lavash": [
-                ("Лаваш с курицей", "Сочная курица с овощами", 25000),
-                ("Лаваш с говядиной", "Нежная говядина с соусом", 28000),
-                ("Лаваш мини", "Маленький, но вкусный", 18000)
-            ],
-            "Burger": [
-                ("Чизбургер", "Классический с сыром", 30000),
-                ("Биг Бургер", "Двойная котлета", 40000),
-                ("Чикен Бургер", "С куриной котлетой", 28000)
-            ],
-            "Xaggi": [
-                ("Хагги классик", "Оригинальный рецепт", 22000),
-                ("Хагги с сыром", "С расплавленным сыром", 25000),
-                ("Хагги острый", "Для любителей остренького", 24000)
-            ],
-            "Shaurma": [
-                ("Шаурма куриная", "Сочная курица", 20000),
-                ("Шаурма говяжья", "С говядиной", 23000),
-                ("Шаурма мега", "Большая порция", 30000)
-            ],
-            "Hotdog": [
-                ("Хот-дог классик", "С сосиской", 12000),
-                ("Хот-дог XXL", "Большой", 18000),
-                ("Хот-дог с сыром", "С сыром чеддер", 15000)
-            ],
-            "Combo": [
-                ("Комбо №1", "Бургер + фри + напиток", 45000),
-                ("Комбо №2", "Лаваш + фри + напиток", 40000),
-                ("Комбо семейный", "Для всей семьи", 120000)
-            ],
-            "Sneki": [
-                ("Картофель фри", "Хрустящий", 10000),
-                ("Наггетсы", "5 штук", 15000),
-                ("Луковые кольца", "Порция", 12000)
-            ],
-            "Sous": [
-                ("Кетчуп", "Классический", 2000),
-                ("Майонез", "Домашний", 2000),
-                ("Острый соус", "Жгучий", 3000)
-            ],
-            "Napitki": [
-                ("Coca-Cola", "0.5л", 8000),
-                ("Fanta", "0.5л", 8000),
-                ("Сок", "0.33л", 7000)
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(Category))
+            if result.scalars().first():
+                logger.info("✅ Demo data already exists")
+                return
+            
+            categories_data = [
+                "Lavash", "Burger", "Xaggi", "Shaurma", "Hotdog", "Combo", "Sneki", "Sous", "Napitki"
             ]
-        }
+            
+            categories = []
+            for name in categories_data:
+                cat = Category(name=name, is_active=True)
+                session.add(cat)
+                categories.append(cat)
+            
+            await session.flush()
+            
+            foods_data = {
+                "Lavash": [
+                    ("Лаваш с курицей", "Сочная курица с овощами", 25000),
+                    ("Лаваш с говядиной", "Нежная говядина с соусом", 28000),
+                    ("Лаваш мини", "Маленький, но вкусный", 18000)
+                ],
+                "Burger": [
+                    ("Чизбургер", "Классический с сыром", 30000),
+                    ("Биг Бургер", "Двойная котлета", 40000),
+                    ("Чикен Бургер", "С куриной котлетой", 28000)
+                ],
+                "Xaggi": [
+                    ("Хагги классик", "Оригинальный рецепт", 22000),
+                    ("Хагги с сыром", "С расплавленным сыром", 25000),
+                    ("Хагги острый", "Для любителей остренького", 24000)
+                ],
+                "Shaurma": [
+                    ("Шаурма куриная", "Сочная курица", 20000),
+                    ("Шаурма говяжья", "С говядиной", 23000),
+                    ("Шаурма мега", "Большая порция", 30000)
+                ],
+                "Hotdog": [
+                    ("Хот-дог классик", "С сосиской", 12000),
+                    ("Хот-дог XXL", "Большой", 18000),
+                    ("Хот-дог с сыром", "С сыром чеддер", 15000)
+                ],
+                "Combo": [
+                    ("Комбо №1", "Бургер + фри + напиток", 45000),
+                    ("Комбо №2", "Лаваш + фри + напиток", 40000),
+                    ("Комбо семейный", "Для всей семьи", 120000)
+                ],
+                "Sneki": [
+                    ("Картофель фри", "Хрустящий", 10000),
+                    ("Наггетсы", "5 штук", 15000),
+                    ("Луковые кольца", "Порция", 12000)
+                ],
+                "Sous": [
+                    ("Кетчуп", "Классический", 2000),
+                    ("Майонез", "Домашний", 2000),
+                    ("Острый соус", "Жгучий", 3000)
+                ],
+                "Napitki": [
+                    ("Coca-Cola", "0.5л", 8000),
+                    ("Fanta", "0.5л", 8000),
+                    ("Сок", "0.33л", 7000)
+                ]
+            }
+            
+            for cat in categories:
+                if cat.name in foods_data:
+                    for name, desc, price in foods_data[cat.name]:
+                        food = Food(
+                            category_id=cat.id,
+                            name=name,
+                            description=desc,
+                            price=price,
+                            rating=4.5 + (hash(name) % 10) / 20,
+                            is_active=True,
+                            is_new=(hash(name) % 3 == 0)
+                        )
+                        session.add(food)
+            
+            await session.commit()
+            logger.info("✅ Demo data seeded successfully")
+    except Exception as e:
+        logger.error(f"❌ Seed data error: {e}")
+
+# ==================== STARTUP & SHUTDOWN ====================
+@app.on_event("startup")
+async def on_startup():
+    """Initialize on startup"""
+    try:
+        logger.info("🚀 Starting FIESTA Delivery System...")
         
-        for cat in categories:
-            if cat.name in foods_data:
-                for name, desc, price in foods_data[cat.name]:
-                    food = Food(
-                        category_id=cat.id,
-                        name=name,
-                        description=desc,
-                        price=price,
-                        rating=4.5 + (hash(name) % 10) / 20,  # Random rating 4.5-5.0
-                        is_active=True,
-                        is_new=(hash(name) % 3 == 0)  # Some marked as new
-                    )
-                    session.add(food)
+        # Initialize database
+        await init_db()
         
-        await session.commit()
-        logger.info("✅ Demo data seeded successfully")
+        # Seed demo data
+        await seed_demo_data()
+        
+        # Register router
+        dp.include_router(router)
+        
+        # Set webhook
+        await bot.delete_webhook(drop_pending_updates=True)
+        webhook_info = await bot.set_webhook(
+            url=WEBHOOK_URL,
+            allowed_updates=["message", "callback_query", "web_app_data"],
+            drop_pending_updates=True
+        )
+        
+        bot_info = await bot.get_me()
+        
+        logger.info(f"✅ Webhook set: {WEBHOOK_URL}")
+        logger.info(f"✅ Bot: @{bot_info.username}")
+        logger.info(f"✅ API Server: http://0.0.0.0:{PORT}")
+        logger.info("✅ System ready!")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup error: {e}")
+        raise
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Cleanup on shutdown"""
+    try:
+        await bot.delete_webhook()
+        await bot.session.close()
+        logger.info("👋 System shutdown complete")
+    except Exception as e:
+        logger.error(f"Shutdown error: {e}")
 
 # ==================== MAIN RUNNER ====================
-async def main():
-    # Initialize database
-    await init_db()
-    
-    # Seed demo data
-    await seed_demo_data()
-    
-    # Register router
-    dp.include_router(router)
-    
-    # Start bot polling in background
-    async def run_bot():
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            logger.info("🤖 Bot started polling...")
-            await dp.start_polling(bot)
-        except Exception as e:
-            logger.error(f"Bot error: {e}")
-    
-    # Start FastAPI in background
-    async def run_api():
-        config = uvicorn.Config(app, host="0.0.0.0", port=API_PORT, log_level="info")
-        server = uvicorn.Server(config)
-        logger.info(f"🌐 API started on port {API_PORT}...")
-        await server.serve()
-    
-    # Run both concurrently
-    await asyncio.gather(
-        run_bot(),
-        run_api()
-    )
-
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Shutting down...")
+    logger.info("🎬 Starting FIESTA Delivery Bot...")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT,
+        log_level="info"
+    )
