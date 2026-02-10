@@ -1,6 +1,10 @@
-aiogram 
-sqlalchemy 
-asyncpg 
-alembic 
-redis 
-python-dotenv
+aiogram==3.4.1
+fastapi==0.110.0
+uvicorn==0.27.1
+
+SQLAlchemy==2.0.27
+asyncpg==0.29.0
+
+redis==5.0.1
+python-dotenv==1.0.1
+pydantic==2.6.4
