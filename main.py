@@ -1332,7 +1332,7 @@ async def courier_delivered(cb: CallbackQuery, bot: Bot):
 # =========================================================
 
 api = FastAPI(title="FIESTA API", version="1.0.0")
-
+app = api
 async def require_tg_user(init_data: str) -> Dict[str, Any]:
     try:
         verify_telegram_init_data(init_data, CONFIG.BOT_TOKEN)
