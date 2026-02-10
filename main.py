@@ -1422,13 +1422,17 @@ async def start_bot():
     bot = Bot(CONFIG.BOT_TOKEN)
     storage = RedisStorage.from_url(CONFIG.REDIS_URL)
     dp = Dispatcher(storage=storage)
+
     dp.include_router(router_client)
     dp.include_router(router_admin)
     dp.include_router(router_courier)
 
+    # MUHIM: webhookni o‘chiramiz
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Bot polling started")
+
+    logger.info("🤖 Bot polling started")
     await dp.start_polling(bot)
+
 
 async def start_api():
     # If you run on Railway, they usually set PORT
@@ -1441,11 +1445,7 @@ async def start_api():
 
 async def main():
     await db_init()
-    # Run both concurrently:
-    await asyncio.gather(
-        start_api(),
-        start_bot(),
-    )
+    await start_bot()
 
 if __name__ == "__main__":
     try:
