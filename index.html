@@ -181,9 +181,7 @@
 
   // IMPORTANT: set your API base (FastAPI domain)
   // Example: https://uzbke-production.up.railway.app
-  const API_BASE = (tg.initDataUnsafe?.start_param && tg.initDataUnsafe.start_param.startsWith("api="))
-    ? decodeURIComponent(tg.initDataUnsafe.start_param.slice(4))
-    : (window.API_BASE_OVERRIDE || "https://uzbke-production.up.railway.app");
+const API_BASE = "https://uzbke-production.up.railway.app";
 
   const categoriesFixed = ["All","Lavash","Burger","Xaggi","Shaurma","Hotdog","Combo","Sneki","Sous","Napitki"];
   let categories = [];
