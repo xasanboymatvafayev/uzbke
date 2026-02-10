@@ -1,524 +1,995 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>FIESTA • WebApp</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <style>
-    :root{
-      --bg:#0b0f14;
-      --panel:#111827;
-      --card:#0f172a;
-      --text:#e5e7eb;
-      --muted:#9ca3af;
-      --line:#1f2937;
-      --accent:#22c55e;
-      --danger:#ef4444;
-      --warn:#f59e0b;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    .wrap{max-width:980px;margin:0 auto;padding:14px 14px 110px}
-    .topbar{display:flex;gap:10px;align-items:center;position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(10px);padding:10px 0;z-index:10}
-    .search{flex:1;position:relative}
-    .search input{
-      width:100%;padding:12px 44px 12px 12px;border:1px solid var(--line);
-      border-radius:14px;background:var(--panel);color:var(--text);outline:none;
-    }
-    .gear{
-      position:absolute;right:10px;top:50%;transform:translateY(-50%);
-      width:28px;height:28px;border-radius:10px;border:1px solid var(--line);
-      display:grid;place-items:center;cursor:pointer;color:var(--muted);background:var(--card);
-      user-select:none;
-    }
-    .cats{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
-    .cat{padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);cursor:pointer}
-    .cat.active{border-color:var(--accent);color:var(--text)}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-    @media (min-width:820px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-    .card{
-      border:1px solid var(--line);border-radius:16px;background:var(--card);
-      padding:12px;display:flex;flex-direction:column;gap:10px;min-height:180px;
-    }
-    .img{
-      height:120px;border-radius:14px;background:linear-gradient(135deg,#1f2937,#0b0f14);
-      border:1px solid var(--line);overflow:hidden;display:grid;place-items:center;color:var(--muted);
-    }
-    .img img{width:100%;height:100%;object-fit:cover}
-    .title{font-weight:700}
-    .desc{color:var(--muted);font-size:13px;line-height:1.25;min-height:32px}
-    .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
-    .price{font-weight:800}
-    .badge{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
-    .btn{
-      padding:10px 12px;border:none;border-radius:12px;background:var(--accent);color:#052e13;
-      font-weight:800;cursor:pointer
-    }
-    .btn:disabled{opacity:.4;cursor:not-allowed}
-    .btn-ghost{
-      background:transparent;border:1px solid var(--line);color:var(--text)
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FIESTA - Food Delivery</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-    /* Cart */
-    .cartbar{
-      position:fixed;left:0;right:0;bottom:0;background:rgba(17,24,39,.95);
-      border-top:1px solid var(--line);backdrop-filter:blur(12px);
-      padding:10px 14px;z-index:20;
-    }
-    .cartbar .inner{max-width:980px;margin:0 auto;display:flex;gap:10px;align-items:center;justify-content:space-between}
-    .cartsum{font-weight:900}
-    .tiny{font-size:12px;color:var(--muted)}
-    .pill{display:flex;gap:8px;align-items:center}
+        :root {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2a2a2a;
+            --bg-card: #333333;
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0b0;
+            --accent: #ff6b35;
+            --accent-hover: #ff8555;
+            --success: #4caf50;
+            --border: #444444;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
 
-    /* Modal */
-    .modalback{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;z-index:30}
-    .modal{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:18px 18px 0 0;padding:14px}
-    .modal h3{margin:0 0 10px}
-    .opt{display:flex;gap:10px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:14px;margin:8px 0;cursor:pointer}
-    .opt input{accent-color:var(--accent)}
-    .form{display:grid;gap:10px;margin-top:10px}
-    .form input,.form textarea{
-      width:100%;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);outline:none;
-    }
-    .form textarea{min-height:80px;resize:vertical}
-    .warn{color:var(--warn);font-size:12px}
-    .err{color:var(--danger);font-size:12px}
-    .ok{color:var(--accent);font-size:12px}
-    .hr{height:1px;background:var(--line);margin:10px 0}
-    .cartlist{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--card)}
-    .itemline{display:flex;justify-content:space-between;gap:10px;margin:8px 0}
-    .qtyctrl{display:flex;gap:8px;align-items:center}
-    .qbtn{width:28px;height:28px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
-  </style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            padding-bottom: 100px;
+        }
+
+        /* Header */
+        .header {
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            padding: 15px;
+            z-index: 100;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .search-container {
+            position: relative;
+            margin-bottom: 10px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 45px 12px 15px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-size: 16px;
+        }
+
+        .search-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .settings-icon {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 20px;
+            cursor: pointer;
+            color: var(--text-secondary);
+        }
+
+        /* Categories */
+        .categories {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding: 10px 0;
+            scrollbar-width: none;
+        }
+
+        .categories::-webkit-scrollbar {
+            display: none;
+        }
+
+        .category-btn {
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+
+        .category-btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        /* Food Grid */
+        .foods-container {
+            padding: 15px;
+        }
+
+        .foods-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 15px;
+        }
+
+        .food-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+            border: 1px solid var(--border);
+        }
+
+        .food-card:active {
+            transform: scale(0.98);
+        }
+
+        .food-image {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            position: relative;
+        }
+
+        .new-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--accent);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .food-info {
+            padding: 12px;
+        }
+
+        .food-name {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .food-desc {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .food-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .food-price {
+            font-weight: bold;
+            color: var(--accent);
+            font-size: 16px;
+        }
+
+        .food-rating {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 12px;
+        }
+
+        .add-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .add-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        /* Cart */
+        .cart-float {
+            position: fixed;
+            bottom: 20px;
+            left: 15px;
+            right: 15px;
+            background: var(--bg-secondary);
+            border-radius: 15px;
+            padding: 15px;
+            box-shadow: 0 -4px 20px var(--shadow);
+            z-index: 200;
+            border: 1px solid var(--border);
+        }
+
+        .cart-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .cart-info {
+            display: flex;
+            gap: 15px;
+        }
+
+        .cart-count {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .cart-total {
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .checkout-btn {
+            width: 100%;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .checkout-btn:disabled {
+            background: var(--border);
+            cursor: not-allowed;
+        }
+
+        .checkout-btn:not(:disabled):hover {
+            background: var(--accent-hover);
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 300;
+            align-items: flex-end;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            width: 100%;
+            max-height: 90vh;
+            border-radius: 20px 20px 0 0;
+            padding: 20px;
+            overflow-y: auto;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(100%);
+            }
+            to {
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .close-btn {
+            font-size: 28px;
+            cursor: pointer;
+            color: var(--text-secondary);
+        }
+
+        /* Form */
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 16px;
+        }
+
+        .form-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .geo-btn {
+            width: 100%;
+            background: var(--success);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .geo-status {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--success);
+        }
+
+        .submit-btn {
+            width: 100%;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        /* Filter Modal */
+        .filter-option {
+            padding: 15px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .filter-option:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        /* Cart Items */
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .cart-item-info {
+            flex: 1;
+        }
+
+        .cart-item-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .cart-item-price {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .cart-item-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .qty-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .qty-display {
+            font-weight: bold;
+            min-width: 30px;
+            text-align: center;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 15px;
+        }
+
+        .promo-input {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .promo-input input {
+            flex: 1;
+        }
+
+        .promo-btn {
+            background: var(--success);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .promo-success {
+            color: var(--success);
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .promo-error {
+            color: #f44336;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
-      <div class="search">
-        <input id="q" placeholder="Поиск..." />
-        <div class="gear" id="gear">⚙️</div>
-      </div>
+    <!-- Header -->
+    <div class="header">
+        <div class="search-container">
+            <input type="text" class="search-input" id="searchInput" placeholder="Поиск блюд...">
+            <span class="settings-icon" id="settingsBtn">⚙️</span>
+        </div>
+        <div class="categories" id="categoriesContainer">
+            <button class="category-btn active" data-category="all">Все</button>
+        </div>
     </div>
 
-    <div class="cats" id="cats"></div>
-    <div class="grid" id="grid"></div>
-  </div>
-
-  <div class="cartbar">
-    <div class="inner">
-      <div class="pill">
-        <div>
-          <div class="cartsum" id="cartsum">0 сум</div>
-          <div class="tiny" id="carttiny">Минимум: 50 000 сум</div>
+    <!-- Foods Grid -->
+    <div class="foods-container">
+        <div id="loadingState" class="loading">
+            <div>⏳ Загрузка...</div>
         </div>
-      </div>
-      <button class="btn" id="checkoutBtn" disabled>Checkout</button>
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">🍽️</div>
+            <div>Блюда не найдены</div>
+        </div>
+        <div class="foods-grid" id="foodsGrid"></div>
     </div>
-  </div>
 
-  <!-- Filter Modal -->
-  <div class="modalback" id="filterBack">
-    <div class="modal">
-      <div class="row">
-        <h3>Фильтр</h3>
-        <button class="btn btn-ghost" id="closeFilter">Закрыть</button>
-      </div>
-
-      <label class="opt">
-        <input type="radio" name="sort" value="rating">
-        <div>
-          <div>Рейтинг</div>
-          <div class="tiny">по убыванию</div>
+    <!-- Cart Float -->
+    <div class="cart-float" id="cartFloat" style="display: none;">
+        <div class="cart-summary">
+            <div class="cart-info">
+                <div class="cart-count" id="cartCount">0 товаров</div>
+                <div class="cart-total" id="cartTotal">0 сум</div>
+            </div>
         </div>
-      </label>
-      <label class="opt">
-        <input type="radio" name="sort" value="new" checked>
-        <div>
-          <div>Новые</div>
-          <div class="tiny">по дате</div>
-        </div>
-      </label>
-      <label class="opt">
-        <input type="radio" name="sort" value="price_asc">
-        <div>
-          <div>Дешевые</div>
-          <div class="tiny">цена ↑</div>
-        </div>
-      </label>
-      <label class="opt">
-        <input type="radio" name="sort" value="price_desc">
-        <div>
-          <div>Дорогие</div>
-          <div class="tiny">цена ↓</div>
-        </div>
-      </label>
-
-      <div class="hr"></div>
-
-      <div class="row">
-        <div>
-          <div class="title">Корзина</div>
-          <div class="tiny">Нажмите Checkout чтобы оформить</div>
-        </div>
-      </div>
-
-      <div class="cartlist" id="cartList"></div>
-
-      <div class="hr"></div>
-
-      <div class="form">
-        <input id="name" placeholder="Имя" />
-        <input id="phone" placeholder="+998 (__) ___-__-__" />
-        <input id="promo" placeholder="Промокод (опционально)" />
-        <textarea id="comment" placeholder="Комментарий"></textarea>
-
-        <div class="row">
-          <button class="btn btn-ghost" id="geoBtn">📍 Локацияны анықлау</button>
-          <div class="tiny" id="geoStatus">lat/lng: —</div>
-        </div>
-
-        <div class="warn">Локация (lat/lng) обязательна. Карта не требуется.</div>
-        <div class="err" id="err"></div>
-        <div class="ok" id="ok"></div>
-
-        <button class="btn" id="sendBtn" disabled>Отправить заказ</button>
-      </div>
+        <button class="checkout-btn" id="checkoutBtn" disabled>Оформить заказ</button>
     </div>
-  </div>
 
-  <script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
+    <!-- Filter Modal -->
+    <div class="modal" id="filterModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">Сортировка</div>
+                <span class="close-btn" onclick="closeFilterModal()">&times;</span>
+            </div>
+            <div class="filter-option" onclick="applySorting('rating')">⭐ По рейтингу</div>
+            <div class="filter-option" onclick="applySorting('new')">🆕 Новые блюда</div>
+            <div class="filter-option" onclick="applySorting('price_asc')">💰 Сначала дешевые</div>
+            <div class="filter-option" onclick="applySorting('price_desc')">💎 Сначала дорогие</div>
+        </div>
+    </div>
 
-    // ✅ FIXED API_BASE (no start_param tricks)
-    const API_BASE = "https://uzbke-production.up.railway.app";
+    <!-- Checkout Modal -->
+    <div class="modal" id="checkoutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">Оформление заказа</div>
+                <span class="close-btn" onclick="closeCheckoutModal()">&times;</span>
+            </div>
 
-    const $ = (id)=>document.getElementById(id);
+            <!-- Cart Items -->
+            <div id="checkoutItems"></div>
 
-    const state = {
-      categories: [],
-      foods: [],
-      categoryId: 0,
-      q: "",
-      sort: "new",
-      cart: new Map(), // foodId -> {food, qty}
-      geo: {lat:null, lng:null},
-      promoOk: null,
-      promoPercent: 0
-    };
+            <!-- Promo Code -->
+            <div class="form-group">
+                <label class="form-label">Промокод (опционально)</label>
+                <div class="promo-input">
+                    <input type="text" class="form-input" id="promoInput" placeholder="Введите промокод">
+                    <button class="promo-btn" onclick="validatePromo()">Применить</button>
+                </div>
+                <div id="promoStatus"></div>
+            </div>
 
-    function fmt(n){ return (n||0).toLocaleString("ru-RU") + " сум"; }
+            <form id="checkoutForm">
+                <div class="form-group">
+                    <label class="form-label">Имя</label>
+                    <input type="text" class="form-input" id="customerName" required>
+                </div>
 
-    function cartTotal(){
-      let s = 0;
-      for (const [,v] of state.cart) s += v.food.price * v.qty;
-      // discount will be applied server-side too; here only UX
-      if (state.promoOk && state.promoPercent>0){
-        s = Math.max(0, Math.round(s * (100 - state.promoPercent) / 100));
-      }
-      return s;
-    }
+                <div class="form-group">
+                    <label class="form-label">Телефон</label>
+                    <input type="tel" class="form-input" id="customerPhone" placeholder="+998 90 123 45 67" required>
+                </div>
 
-    function renderCats(){
-      const wrap = $("cats");
-      wrap.innerHTML = "";
-      state.categories.forEach(c=>{
-        const b = document.createElement("div");
-        b.className = "cat" + (c.id===state.categoryId ? " active":"");
-        b.textContent = c.name;
-        b.onclick = ()=>{ state.categoryId=c.id; loadFoods(); };
-        wrap.appendChild(b);
-      });
-    }
+                <div class="form-group">
+                    <label class="form-label">Комментарий (опционально)</label>
+                    <input type="text" class="form-input" id="customerComment" placeholder="Комментарий к заказу">
+                </div>
 
-    function renderFoods(){
-      const grid = $("grid");
-      grid.innerHTML = "";
-      state.foods.forEach(f=>{
-        const card = document.createElement("div");
-        card.className = "card";
+                <div class="form-group">
+                    <label class="form-label">Локация *</label>
+                    <button type="button" class="geo-btn" onclick="getLocation()">
+                        📍 Определить мою локацию
+                    </button>
+                    <div id="geoStatus"></div>
+                </div>
 
-        const img = document.createElement("div");
-        img.className = "img";
-        if (f.image_url){
-          const im = document.createElement("img");
-          im.src = f.image_url;
-          img.appendChild(im);
-        } else {
-          img.textContent = "No image";
+                <div class="form-group">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                        <span>Итого:</span>
+                        <span id="checkoutTotal" style="font-weight: bold; color: var(--accent);">0 сум</span>
+                    </div>
+                </div>
+
+                <button type="submit" class="submit-btn">Отправить заказ</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Telegram WebApp Init
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.enableClosingConfirmation();
+
+        // API Configuration
+        const API_URL = 'https://uzbke-production.up.railway.app/api';
+
+        // State
+        let categories = [];
+        let foods = [];
+        let filteredFoods = [];
+        let cart = [];
+        let currentCategory = 'all';
+        let currentSorting = null;
+        let userLocation = null;
+        let appliedPromo = null;
+
+        // Initialize
+        async function init() {
+            try {
+                // Load categories
+                const categoriesRes = await fetch(`${API_URL}/categories`);
+                categories = await categoriesRes.json();
+                renderCategories();
+
+                // Load foods
+                const foodsRes = await fetch(`${API_URL}/foods`);
+                foods = await foodsRes.json();
+                filteredFoods = [...foods];
+                renderFoods();
+
+                // Set default name from Telegram
+                if (tg.initDataUnsafe.user) {
+                    document.getElementById('customerName').value = tg.initDataUnsafe.user.first_name || '';
+                }
+
+                document.getElementById('loadingState').style.display = 'none';
+            } catch (error) {
+                console.error('Init error:', error);
+                document.getElementById('loadingState').innerHTML = '<div>❌ Ошибка загрузки</div>';
+            }
         }
 
-        const t = document.createElement("div");
-        t.className = "title";
-        t.textContent = f.name;
-
-        const d = document.createElement("div");
-        d.className = "desc";
-        d.textContent = f.description || "";
-
-        const row = document.createElement("div");
-        row.className = "row";
-
-        const left = document.createElement("div");
-        left.innerHTML = `<div class="price">${fmt(f.price)}</div>
-                          <div class="tiny">⭐ ${Number(f.rating||0).toFixed(1)} ${f.is_new ? " • NEW":""}</div>`;
-
-        const add = document.createElement("button");
-        add.className = "btn";
-        add.textContent = "Add";
-        add.onclick = ()=> addToCart(f);
-
-        row.appendChild(left);
-        row.appendChild(add);
-
-        card.appendChild(img);
-        card.appendChild(t);
-        card.appendChild(d);
-        card.appendChild(row);
-        grid.appendChild(card);
-      });
-
-      updateCartUI();
-    }
-
-    function updateCartUI(){
-      const total = cartTotal();
-      $("cartsum").textContent = fmt(total);
-      $("checkoutBtn").disabled = (total < 50000);
-      $("sendBtn").disabled = !(total >= 50000 && state.geo.lat != null && state.geo.lng != null && state.cart.size>0);
-      $("carttiny").textContent = state.cart.size ? `Позиций: ${state.cart.size}` : "Минимум: 50 000 сум";
-      renderCartList();
-    }
-
-    function renderCartList(){
-      const box = $("cartList");
-      if (state.cart.size === 0){
-        box.innerHTML = `<div class="tiny">Корзина пустая</div>`;
-        return;
-      }
-      box.innerHTML = "";
-      for (const [id, v] of state.cart){
-        const line = document.createElement("div");
-        line.className = "itemline";
-
-        const left = document.createElement("div");
-        left.innerHTML = `<div class="title" style="font-size:14px">${v.food.name}</div>
-                          <div class="tiny">${fmt(v.food.price)} x ${v.qty} = ${fmt(v.food.price*v.qty)}</div>`;
-
-        const ctrl = document.createElement("div");
-        ctrl.className = "qtyctrl";
-        const minus = document.createElement("button");
-        minus.className = "qbtn";
-        minus.textContent = "–";
-        minus.onclick = ()=> setQty(id, v.qty-1);
-        const qty = document.createElement("div");
-        qty.textContent = v.qty;
-        const plus = document.createElement("button");
-        plus.className = "qbtn";
-        plus.textContent = "+";
-        plus.onclick = ()=> setQty(id, v.qty+1);
-        ctrl.appendChild(minus); ctrl.appendChild(qty); ctrl.appendChild(plus);
-
-        line.appendChild(left);
-        line.appendChild(ctrl);
-        box.appendChild(line);
-      }
-    }
-
-    function addToCart(food){
-      const v = state.cart.get(food.id);
-      if (v) v.qty += 1;
-      else state.cart.set(food.id, {food, qty:1});
-      updateCartUI();
-    }
-    function setQty(foodId, qty){
-      if (qty <= 0) state.cart.delete(foodId);
-      else state.cart.get(foodId).qty = qty;
-      updateCartUI();
-    }
-
-    function openFilter(){ $("filterBack").style.display="flex"; }
-    function closeFilter(){ $("filterBack").style.display="none"; }
-
-    async function apiGet(path){
-      // Telegram initData must be sent as header
-      const initData = tg.initData || "";
-      const res = await fetch(API_BASE + path, {
-        headers: { "X-Tg-Init-Data": initData }
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error((data && data.detail) ? data.detail : "API error");
-      return data;
-    }
-
-    async function loadCategories(){
-      const data = await apiGet("/api/categories");
-      state.categories = data.categories || [];
-      renderCats();
-    }
-
-    async function loadFoods(){
-      const qs = new URLSearchParams();
-      if ($("q").value.trim()) qs.set("q", $("q").value.trim());
-      if (state.categoryId) qs.set("category_id", String(state.categoryId));
-      qs.set("sort", state.sort);
-
-      const data = await apiGet("/api/foods?" + qs.toString());
-      state.foods = data.foods || [];
-      renderCats();
-      renderFoods();
-    }
-
-    function maskPhone(v){
-      // very simple mask for +998
-      let digits = (v||"").replace(/\D/g,"");
-      if (digits.startsWith("998")) digits = digits.slice(3);
-      digits = digits.slice(0,9);
-      const a = digits.slice(0,2);
-      const b = digits.slice(2,5);
-      const c = digits.slice(5,7);
-      const d = digits.slice(7,9);
-      let out = "+998";
-      if (a) out += " ("+a;
-      if (a && a.length===2) out += ")";
-      if (b) out += " "+b;
-      if (c) out += "-"+c;
-      if (d) out += "-"+d;
-      return out;
-    }
-
-    async function validatePromo(){
-      const code = $("promo").value.trim();
-      $("err").textContent = "";
-      $("ok").textContent = "";
-      state.promoOk = null;
-      state.promoPercent = 0;
-      if (!code){
-        updateCartUI();
-        return;
-      }
-      try{
-        const data = await apiGet("/api/promo/validate?code="+encodeURIComponent(code));
-        if (data.ok){
-          state.promoOk = true;
-          state.promoPercent = data.discount_percent || 0;
-          $("ok").textContent = `Промокод OK: скидка ${state.promoPercent}%`;
-        } else {
-          state.promoOk = false;
-          $("err").textContent = "Промокод недействителен: " + (data.reason || "ошибка");
+        // Render Categories
+        function renderCategories() {
+            const container = document.getElementById('categoriesContainer');
+            container.innerHTML = '<button class="category-btn active" data-category="all" onclick="filterByCategory(\'all\')">Все</button>';
+            
+            categories.forEach(cat => {
+                const btn = document.createElement('button');
+                btn.className = 'category-btn';
+                btn.textContent = cat.name;
+                btn.dataset.category = cat.id;
+                btn.onclick = () => filterByCategory(cat.id);
+                container.appendChild(btn);
+            });
         }
-      }catch(e){
-        $("err").textContent = String(e.message||e);
-      }
-      updateCartUI();
-    }
 
-    function collectItems(){
-      const arr = [];
-      for (const [,v] of state.cart){
-        arr.push({
-          food_id: v.food.id,
-          name: v.food.name,
-          qty: v.qty,
-          price: v.food.price
+        // Render Foods
+        function renderFoods() {
+            const grid = document.getElementById('foodsGrid');
+            const emptyState = document.getElementById('emptyState');
+            
+            if (filteredFoods.length === 0) {
+                grid.innerHTML = '';
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            grid.innerHTML = '';
+
+            filteredFoods.forEach(food => {
+                const card = document.createElement('div');
+                card.className = 'food-card';
+                card.onclick = () => addToCart(food);
+
+                const emoji = ['🍕', '🍔', '🌯', '🌭', '🍟', '🥤'][Math.floor(Math.random() * 6)];
+
+                card.innerHTML = `
+                    <div class="food-image">
+                        ${food.image_url ? `<img src="${food.image_url}" style="width:100%;height:100%;object-fit:cover;">` : emoji}
+                        ${food.is_new ? '<div class="new-badge">NEW</div>' : ''}
+                    </div>
+                    <div class="food-info">
+                        <div class="food-name">${food.name}</div>
+                        <div class="food-desc">${food.description || ''}</div>
+                        <div class="food-footer">
+                            <div>
+                                <div class="food-price">${formatPrice(food.price)}</div>
+                                <div class="food-rating">⭐ ${food.rating.toFixed(1)}</div>
+                            </div>
+                            <button class="add-btn" onclick="event.stopPropagation(); addToCart(${JSON.stringify(food).replace(/"/g, '&quot;')})">Add</button>
+                        </div>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        // Filter by Category
+        function filterByCategory(categoryId) {
+            currentCategory = categoryId;
+            
+            // Update active button
+            document.querySelectorAll('.category-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.category == categoryId) {
+                    btn.classList.add('active');
+                }
+            });
+
+            applyFilters();
+        }
+
+        // Apply Filters
+        function applyFilters() {
+            let result = [...foods];
+
+            // Filter by category
+            if (currentCategory !== 'all') {
+                result = result.filter(f => f.category_id == currentCategory);
+            }
+
+            // Filter by search
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            if (search) {
+                result = result.filter(f => 
+                    f.name.toLowerCase().includes(search) || 
+                    (f.description && f.description.toLowerCase().includes(search))
+                );
+            }
+
+            // Apply sorting
+            if (currentSorting === 'rating') {
+                result.sort((a, b) => b.rating - a.rating);
+            } else if (currentSorting === 'new') {
+                result.sort((a, b) => (b.is_new ? 1 : 0) - (a.is_new ? 1 : 0));
+            } else if (currentSorting === 'price_asc') {
+                result.sort((a, b) => a.price - b.price);
+            } else if (currentSorting === 'price_desc') {
+                result.sort((a, b) => b.price - a.price);
+            }
+
+            filteredFoods = result;
+            renderFoods();
+        }
+
+        // Apply Sorting
+        function applySorting(type) {
+            currentSorting = type;
+            applyFilters();
+            closeFilterModal();
+        }
+
+        // Add to Cart
+        function addToCart(food) {
+            const existing = cart.find(item => item.food_id === food.id);
+            
+            if (existing) {
+                existing.qty++;
+            } else {
+                cart.push({
+                    food_id: food.id,
+                    name: food.name,
+                    price: food.price,
+                    qty: 1
+                });
+            }
+
+            updateCart();
+            tg.HapticFeedback.impactOccurred('light');
+        }
+
+        // Update Cart Display
+        function updateCart() {
+            const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            const count = cart.reduce((sum, item) => sum + item.qty, 0);
+
+            document.getElementById('cartCount').textContent = `${count} товаров`;
+            document.getElementById('cartTotal').textContent = formatPrice(total);
+
+            const cartFloat = document.getElementById('cartFloat');
+            const checkoutBtn = document.getElementById('checkoutBtn');
+
+            if (count > 0) {
+                cartFloat.style.display = 'block';
+                checkoutBtn.disabled = total < 50000;
+            } else {
+                cartFloat.style.display = 'none';
+            }
+        }
+
+        // Open Checkout
+        document.getElementById('checkoutBtn').addEventListener('click', () => {
+            renderCheckoutItems();
+            updateCheckoutTotal();
+            document.getElementById('checkoutModal').classList.add('active');
         });
-      }
-      return arr;
-    }
 
-    function sendOrder(){
-      $("err").textContent = "";
-      $("ok").textContent = "";
-      const total = cartTotal();
-      if (total < 50000){
-        $("err").textContent = "Минимум 50 000 сум";
-        return;
-      }
-      if (state.geo.lat == null || state.geo.lng == null){
-        $("err").textContent = "Локация обязательна";
-        return;
-      }
-      const payload = {
-        type: "order_create",
-        items: collectItems(),
-        total: total,
-        customer_name: $("name").value.trim() || (tg.initDataUnsafe?.user?.first_name || "User"),
-        phone: $("phone").value.trim(),
-        comment: $("comment").value.trim(),
-        promo_code: $("promo").value.trim() || null,
-        location: { lat: state.geo.lat, lng: state.geo.lng },
-        created_at_client: new Date().toISOString(),
-      };
-      tg.sendData(JSON.stringify(payload));
-      tg.close();
-    }
+        // Render Checkout Items
+        function renderCheckoutItems() {
+            const container = document.getElementById('checkoutItems');
+            container.innerHTML = '';
 
-    // EVENTS
-    $("gear").onclick = openFilter;
-    $("closeFilter").onclick = closeFilter;
-    $("filterBack").onclick = (e)=>{ if (e.target.id==="filterBack") closeFilter(); };
+            cart.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'cart-item';
+                div.innerHTML = `
+                    <div class="cart-item-info">
+                        <div class="cart-item-name">${item.name}</div>
+                        <div class="cart-item-price">${formatPrice(item.price)} × ${item.qty} = ${formatPrice(item.price * item.qty)}</div>
+                    </div>
+                    <div class="cart-item-controls">
+                        <button class="qty-btn" onclick="changeQty(${index}, -1)">−</button>
+                        <div class="qty-display">${item.qty}</div>
+                        <button class="qty-btn" onclick="changeQty(${index}, 1)">+</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
 
-    document.querySelectorAll('input[name="sort"]').forEach(r=>{
-      r.onchange = ()=>{
-        state.sort = document.querySelector('input[name="sort"]:checked').value;
-        loadFoods();
-      };
-    });
+        // Change Quantity
+        function changeQty(index, delta) {
+            cart[index].qty += delta;
+            
+            if (cart[index].qty <= 0) {
+                cart.splice(index, 1);
+            }
 
-    $("q").addEventListener("input", ()=>{
-      clearTimeout(window.__t);
-      window.__t = setTimeout(()=>loadFoods(), 250);
-    });
+            updateCart();
+            renderCheckoutItems();
+            updateCheckoutTotal();
+        }
 
-    $("checkoutBtn").onclick = ()=>{
-      // prefill name with telegram
-      $("name").value = $("name").value || (tg.initDataUnsafe?.user?.first_name || "") + " " + (tg.initDataUnsafe?.user?.last_name || "");
-      openFilter();
-      updateCartUI();
-    };
+        // Update Checkout Total
+        function updateCheckoutTotal() {
+            let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
 
-    $("geoBtn").onclick = ()=>{
-      $("err").textContent = "";
-      $("ok").textContent = "";
-      if (!navigator.geolocation){
-        $("err").textContent = "Geolocation not supported";
-        return;
-      }
-      $("geoStatus").textContent = "Определяем...";
-      navigator.geolocation.getCurrentPosition(
-        (pos)=>{
-          state.geo.lat = pos.coords.latitude;
-          state.geo.lng = pos.coords.longitude;
-          $("geoStatus").textContent = `lat/lng: ${state.geo.lat.toFixed(6)}, ${state.geo.lng.toFixed(6)}`;
-          $("ok").textContent = "Локация получена ✅";
-          updateCartUI();
-        },
-        (err)=>{
-          $("geoStatus").textContent = "lat/lng: —";
-          $("err").textContent = "Не удалось получить локацию: " + err.message;
-        },
-        { enableHighAccuracy:true, timeout:10000 }
-      );
-    };
+            if (appliedPromo) {
+                total = total * (1 - appliedPromo.discount_percent / 100);
+            }
 
-    $("phone").addEventListener("input", (e)=>{
-      e.target.value = maskPhone(e.target.value);
-    });
+            document.getElementById('checkoutTotal').textContent = formatPrice(total);
+        }
 
-    $("promo").addEventListener("change", validatePromo);
+        // Validate Promo
+        async function validatePromo() {
+            const code = document.getElementById('promoInput').value.trim();
+            const statusDiv = document.getElementById('promoStatus');
 
-    $("sendBtn").onclick = sendOrder;
+            if (!code) {
+                statusDiv.innerHTML = '<div class="promo-error">Введите промокод</div>';
+                return;
+            }
 
-    // INIT
-    (async ()=>{
-      try{
-        await loadCategories();
-        await loadFoods();
-      }catch(e){
-        $("grid").innerHTML = `<div class="err">Ошибка загрузки: ${String(e.message||e)}</div>`;
-      }
-    })();
-  </script>
+            try {
+                const res = await fetch(`${API_URL}/promo/validate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({code})
+                });
+
+                if (res.ok) {
+                    appliedPromo = await res.json();
+                    statusDiv.innerHTML = `<div class="promo-success">✅ Скидка ${appliedPromo.discount_percent}% применена!</div>`;
+                    updateCheckoutTotal();
+                } else {
+                    statusDiv.innerHTML = '<div class="promo-error">❌ Неверный или истекший промокод</div>';
+                    appliedPromo = null;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="promo-error">❌ Ошибка проверки</div>';
+                appliedPromo = null;
+            }
+        }
+
+        // Get Location
+        function getLocation() {
+            const statusDiv = document.getElementById('geoStatus');
+            statusDiv.innerHTML = '<div style="color: var(--text-secondary);">⏳ Определение локации...</div>';
+
+            if (!navigator.geolocation) {
+                statusDiv.innerHTML = '<div class="promo-error">❌ Геолокация не поддерживается</div>';
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    userLocation = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    statusDiv.innerHTML = `<div class="geo-status">✅ Локация определена</div>`;
+                },
+                (error) => {
+                    statusDiv.innerHTML = '<div class="promo-error">❌ Не удалось определить локацию</div>';
+                    console.error('Geolocation error:', error);
+                }
+            );
+        }
+
+        // Submit Order
+        document.getElementById('checkoutForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            if (!userLocation) {
+                document.getElementById('geoStatus').innerHTML = '<div class="promo-error">❌ Необходимо определить локацию</div>';
+                return;
+            }
+
+            let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+
+            if (appliedPromo) {
+                total = total * (1 - appliedPromo.discount_percent / 100);
+            }
+
+            const orderData = {
+                type: 'order_create',
+                items: cart,
+                total: total,
+                customer_name: document.getElementById('customerName').value,
+                phone: document.getElementById('customerPhone').value,
+                comment: document.getElementById('customerComment').value,
+                location: userLocation,
+                promo_code: appliedPromo ? appliedPromo.code : null,
+                created_at_client: new Date().toISOString()
+            };
+
+            tg.sendData(JSON.stringify(orderData));
+            tg.close();
+        });
+
+        // Close Modals
+        function closeFilterModal() {
+            document.getElementById('filterModal').classList.remove('active');
+        }
+
+        function closeCheckoutModal() {
+            document.getElementById('checkoutModal').classList.remove('active');
+        }
+
+        // Search Input
+        document.getElementById('searchInput').addEventListener('input', applyFilters);
+
+        // Settings Button
+        document.getElementById('settingsBtn').addEventListener('click', () => {
+            document.getElementById('filterModal').classList.add('active');
+        });
+
+        // Format Price
+        function formatPrice(price) {
+            return new Intl.NumberFormat('ru-RU').format(Math.round(price)) + ' сум';
+        }
+
+        // Phone Mask
+        document.getElementById('customerPhone').addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            
+            if (value.length > 0 && !value.startsWith('998')) {
+                value = '998' + value;
+            }
+            
+            if (value.length > 12) {
+                value = value.slice(0, 12);
+            }
+            
+            if (value.length >= 3) {
+                e.target.value = '+' + value.slice(0, 3) + ' ' + 
+                    (value.slice(3, 5) || '') + 
+                    (value.length > 5 ? ' ' + value.slice(5, 8) : '') +
+                    (value.length > 8 ? ' ' + value.slice(8, 10) : '') +
+                    (value.length > 10 ? ' ' + value.slice(10, 12) : '');
+            }
+        });
+
+        // Init on load
+        init();
+    </script>
 </body>
 </html>
