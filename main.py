@@ -3,7 +3,7 @@
 """
 FIESTA FOOD DELIVERY BOT - PRODUCTION READY
 Python 3.11+ | aiogram 3.x | PostgreSQL | Redis | FastAPI
-WEBHOOK MODE for Railway/Heroku/Render deployment
+WEBHOOK MODE - FULLY WORKING VERSION
 """
 
 import asyncio
@@ -47,7 +47,7 @@ import redis.asyncio as aioredis
 
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7917271389:AAE4PXCowGo6Bsfdy3Hrz3x689MLJdQmVi4")
-ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "6365371142").split(",")]
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "6365371142").split(",") if x.strip()]
 DB_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:BDAaILJKOITNLlMOjJNfWiRPbICwEcpZ@centerbeam.proxy.rlwy.net:35489/railway")
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:GBrZNeUKJfqRlPcQUoUICWQpbQRtRRJp@ballast.proxy.rlwy.net:35411")
 SHOP_CHANNEL_ID = int(os.getenv("SHOP_CHANNEL_ID", "-1003530497437"))
@@ -161,41 +161,47 @@ class Courier(Base):
     orders = relationship("Order", back_populates="courier")
 
 # ==================== DATABASE SESSION ====================
-engine = create_async_engine(DB_URL, echo=False, poolclass=NullPool)
-async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = None
+async_session_maker = None
 
 async def init_db():
     """Initialize database tables"""
+    global engine, async_session_maker
     try:
+        engine = create_async_engine(DB_URL, echo=False, poolclass=NullPool)
+        async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("✅ Database initialized")
+        return True
     except Exception as e:
         logger.error(f"❌ Database initialization error: {e}")
-        raise
+        return False
 
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:
         yield session
 
-# ==================== FSM STATES ====================
-class AdminFoodAdd(StatesGroup):
-    name = State()
-    category = State()
-    price = State()
-    description = State()
-    rating = State()
-    image_url = State()
+# ==================== BOT & DISPATCHER ====================
+bot = None
+storage = None
+dp = None
+router = Router()
 
-class AdminPromoAdd(StatesGroup):
-    code = State()
-    discount = State()
-    expires_days = State()
-    limit = State()
-
-class AdminCourierAdd(StatesGroup):
-    chat_id = State()
-    name = State()
+def init_bot():
+    """Initialize bot and dispatcher"""
+    global bot, storage, dp
+    try:
+        bot = Bot(token=BOT_TOKEN)
+        storage = RedisStorage.from_url(REDIS_URL)
+        dp = Dispatcher(storage=storage)
+        dp.include_router(router)
+        logger.info("✅ Bot initialized")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Bot initialization error: {e}")
+        return False
 
 # ==================== SERVICES ====================
 
@@ -227,6 +233,9 @@ async def get_referral_stats(session: AsyncSession, user_id: int) -> Dict:
         select(User.tg_id).where(User.ref_by_user_id == user_id)
     )
     referred_user_tg_ids = [row[0] for row in referred_users_result.all()]
+    
+    if not referred_user_tg_ids:
+        return {"ref_count": 0, "orders_count": 0, "delivered_count": 0}
     
     orders_result = await session.execute(
         select(func.count(Order.id)).where(Order.user_id.in_(
@@ -291,12 +300,6 @@ async def validate_promo(session: AsyncSession, code: str) -> Optional[Dict]:
         "code": promo.code,
         "discount_percent": promo.discount_percent
     }
-
-async def use_promo(session: AsyncSession, code: str):
-    await session.execute(
-        update(Promo).where(Promo.code == code).values(used_count=Promo.used_count + 1)
-    )
-    await session.commit()
 
 async def create_order(session: AsyncSession, user_id: int, data: Dict) -> Order:
     last_order = await session.execute(select(Order).order_by(Order.id.desc()).limit(1))
@@ -395,31 +398,23 @@ async def get_stats(session: AsyncSession, period: str = "today") -> Dict:
         "active_orders": active_count
     }
 
-async def notify_user(bot: Bot, tg_id: int, text: str):
+async def notify_user(tg_id: int, text: str):
     try:
         await bot.send_message(tg_id, text)
     except Exception as e:
         logger.error(f"Failed to notify user {tg_id}: {e}")
 
-async def update_admin_post(bot: Bot, message_id: int, order: Order, items: List[OrderItem]):
+async def update_admin_post(message_id: int, order: Order, items: List[OrderItem]):
     status_emoji = {
-        "NEW": "🆕",
-        "CONFIRMED": "✅",
-        "COOKING": "🍳",
-        "COURIER_ASSIGNED": "🚴",
-        "OUT_FOR_DELIVERY": "📦",
-        "DELIVERED": "✅",
-        "CANCELED": "❌"
+        "NEW": "🆕", "CONFIRMED": "✅", "COOKING": "🍳",
+        "COURIER_ASSIGNED": "🚴", "OUT_FOR_DELIVERY": "📦",
+        "DELIVERED": "✅", "CANCELED": "❌"
     }
     
     status_text = {
-        "NEW": "Принят",
-        "CONFIRMED": "Подтвержден",
-        "COOKING": "Готовится",
-        "COURIER_ASSIGNED": "Курьер назначен",
-        "OUT_FOR_DELIVERY": "Передан курьеру",
-        "DELIVERED": "Доставлен",
-        "CANCELED": "Отменен"
+        "NEW": "Принят", "CONFIRMED": "Подтвержден", "COOKING": "Готовится",
+        "COURIER_ASSIGNED": "Курьер назначен", "OUT_FOR_DELIVERY": "Передан курьеру",
+        "DELIVERED": "Доставлен", "CANCELED": "Отменен"
     }
     
     items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty} = {item.line_total:,.0f} сум" for item in items])
@@ -445,18 +440,12 @@ async def update_admin_post(bot: Bot, message_id: int, order: Order, items: List
             InlineKeyboardButton(text="❌ Отменить", callback_data=f"order_cancel:{order.id}")
         ])
     elif order.status == "CONFIRMED":
-        keyboard.append([
-            InlineKeyboardButton(text="🍳 Готовится", callback_data=f"order_cooking:{order.id}")
-        ])
+        keyboard.append([InlineKeyboardButton(text="🍳 Готовится", callback_data=f"order_cooking:{order.id}")])
     elif order.status == "COOKING":
-        keyboard.append([
-            InlineKeyboardButton(text="🚴 Назначить курьера", callback_data=f"order_assign_courier:{order.id}")
-        ])
+        keyboard.append([InlineKeyboardButton(text="🚴 Назначить курьера", callback_data=f"order_assign_courier:{order.id}")])
     
     if order.location_lat and order.location_lng:
-        keyboard.append([
-            InlineKeyboardButton(text="📍 Локация", url=f"https://maps.google.com/?q={order.location_lat},{order.location_lng}")
-        ])
+        keyboard.append([InlineKeyboardButton(text="📍 Локация", url=f"https://maps.google.com/?q={order.location_lat},{order.location_lng}")])
     
     try:
         await bot.edit_message_text(
@@ -500,70 +489,71 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
-# ==================== BOT & DISPATCHER ====================
-bot = Bot(token=BOT_TOKEN)
-storage = RedisStorage.from_url(REDIS_URL)
-dp = Dispatcher(storage=storage)
-router = Router()
-
 # ==================== CLIENT HANDLERS ====================
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    async with async_session_maker() as session:
-        args = message.text.split()
-        ref_by = None
-        if len(args) > 1:
-            try:
-                ref_by_tg_id = int(args[1])
-                if ref_by_tg_id != message.from_user.id:
-                    ref_user_result = await session.execute(select(User).where(User.tg_id == ref_by_tg_id))
-                    ref_user = ref_user_result.scalar_one_or_none()
-                    if ref_user:
-                        ref_by = ref_user.id
-            except:
-                pass
-        
-        user = await get_or_create_user(
-            session,
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-            full_name=message.from_user.full_name,
-            ref_by=ref_by
-        )
-        
-        await message.answer(
-            f"Добро пожаловать в FIESTA! {user.full_name}\n\n"
-            "Для заказа перейдите по кнопке ➡️ 🛍 Заказать",
-            reply_markup=get_main_keyboard()
-        )
+    try:
+        async with async_session_maker() as session:
+            args = message.text.split()
+            ref_by = None
+            if len(args) > 1:
+                try:
+                    ref_by_tg_id = int(args[1])
+                    if ref_by_tg_id != message.from_user.id:
+                        ref_user_result = await session.execute(select(User).where(User.tg_id == ref_by_tg_id))
+                        ref_user = ref_user_result.scalar_one_or_none()
+                        if ref_user:
+                            ref_by = ref_user.id
+                except:
+                    pass
+            
+            user = await get_or_create_user(
+                session,
+                tg_id=message.from_user.id,
+                username=message.from_user.username,
+                full_name=message.from_user.full_name,
+                ref_by=ref_by
+            )
+            
+            await message.answer(
+                f"Добро пожаловать в FIESTA! {user.full_name}\n\n"
+                "Для заказа перейдите по кнопке ➡️ 🛍 Заказать",
+                reply_markup=get_main_keyboard()
+            )
+    except Exception as e:
+        logger.error(f"Error in cmd_start: {e}")
+        await message.answer("Произошла ошибка. Попробуйте позже.")
 
 @router.message(F.text == "📦 Мои заказы")
 async def my_orders(message: Message):
-    async with async_session_maker() as session:
-        user = await get_or_create_user(session, message.from_user.id)
-        orders = await get_user_orders(session, user.id)
-        
-        if not orders:
-            await message.answer(
-                "В данный момент у вас нет активных заказов в нашем магазине.\n\n"
-                "Чтобы открыть магазин, введите команду — /shop"
-            )
-            return
-        
-        text = "📦 <b>Ваши заказы:</b>\n\n"
-        for order in orders:
-            items_result = await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))
-            items = items_result.scalars().all()
-            items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty}" for item in items])
+    try:
+        async with async_session_maker() as session:
+            user = await get_or_create_user(session, message.from_user.id)
+            orders = await get_user_orders(session, user.id)
             
-            text += f"🆔 <b>Заказ №{order.order_number}</b>\n"
-            text += f"📅 {order.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-            text += f"💰 {order.total:,.0f} сум\n"
-            text += f"📦 {order.status}\n"
-            text += f"{items_text}\n\n"
-        
-        await message.answer(text, parse_mode="HTML")
+            if not orders:
+                await message.answer(
+                    "В данный момент у вас нет активных заказов в нашем магазине.\n\n"
+                    "Чтобы открыть магазин, введите команду — /shop"
+                )
+                return
+            
+            text = "📦 <b>Ваши заказы:</b>\n\n"
+            for order in orders:
+                items_result = await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+                items = items_result.scalars().all()
+                items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty}" for item in items])
+                
+                text += f"🆔 <b>Заказ №{order.order_number}</b>\n"
+                text += f"📅 {order.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+                text += f"💰 {order.total:,.0f} сум\n"
+                text += f"📦 {order.status}\n"
+                text += f"{items_text}\n\n"
+            
+            await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in my_orders: {e}")
 
 @router.message(Command("shop"))
 @router.message(F.text == "🛍 Заказать")
@@ -589,14 +579,15 @@ async def info(message: Message):
 
 @router.message(F.text == "👥 Пригласить друга")
 async def referral(message: Message):
-    async with async_session_maker() as session:
-        user = await get_or_create_user(session, message.from_user.id)
-        stats = await get_referral_stats(session, user.id)
-        
-        bot_info = await bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start={message.from_user.id}"
-        
-        text = f"""👥 <b>Пригласить друга</b>
+    try:
+        async with async_session_maker() as session:
+            user = await get_or_create_user(session, message.from_user.id)
+            stats = await get_referral_stats(session, user.id)
+            
+            bot_info = await bot.get_me()
+            ref_link = f"https://t.me/{bot_info.username}?start={message.from_user.id}"
+            
+            text = f"""👥 <b>Пригласить друга</b>
 
 За приглашение друга, вы можете получить промо-код от нас
 
@@ -609,12 +600,14 @@ async def referral(message: Message):
 
 Пригласите трех человек и вы получите от нас промо-код со скидкой 15%
 """
-        
-        if stats['ref_count'] >= 3 and not user.promo_given:
-            promo = await create_referral_promo(session, user)
-            text += f"\n\n🎉 <b>Поздравляем!</b> Вы получили промокод: <code>{promo.code}</code>"
-        
-        await message.answer(text, parse_mode="HTML")
+            
+            if stats['ref_count'] >= 3 and not user.promo_given:
+                promo = await create_referral_promo(session, user)
+                text += f"\n\n🎉 <b>Поздравляем!</b> Вы получили промокод: <code>{promo.code}</code>"
+            
+            await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in referral: {e}")
 
 @router.message(F.web_app_data)
 async def webapp_data(message: Message):
@@ -852,9 +845,9 @@ async def order_confirm(callback: CallbackQuery):
         user = user_result.scalar_one_or_none()
         
         if order.admin_message_id:
-            await update_admin_post(bot, order.admin_message_id, order, items)
+            await update_admin_post(order.admin_message_id, order, items)
         
-        await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} подтвержден ✅")
+        await notify_user(user.tg_id, f"Ваш заказ №{order.order_number} подтвержден ✅")
         
         await callback.answer("✅ Заказ подтвержден")
 
@@ -878,9 +871,9 @@ async def order_cooking(callback: CallbackQuery):
         user = user_result.scalar_one_or_none()
         
         if order.admin_message_id:
-            await update_admin_post(bot, order.admin_message_id, order, items)
+            await update_admin_post(order.admin_message_id, order, items)
         
-        await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} готовится 🍳")
+        await notify_user(user.tg_id, f"Ваш заказ №{order.order_number} готовится 🍳")
         
         await callback.answer("🍳 Статус: Готовится")
 
@@ -938,7 +931,7 @@ async def assign_courier(callback: CallbackQuery):
         user = user_result.scalar_one_or_none()
         
         if order.admin_message_id:
-            await update_admin_post(bot, order.admin_message_id, order, items)
+            await update_admin_post(order.admin_message_id, order, items)
         
         items_text = "\n".join([f"  • {item.name_snapshot} x{item.qty}" for item in items])
         courier_text = f"""🚴 <b>Новый заказ №{order.order_number}</b>
@@ -970,7 +963,7 @@ async def assign_courier(callback: CallbackQuery):
             parse_mode="HTML"
         )
         
-        await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} назначен курьеру 🚴")
+        await notify_user(user.tg_id, f"Ваш заказ №{order.order_number} назначен курьеру 🚴")
         
         await callback.message.edit_text(
             f"✅ Курьер {courier.name} назначен на заказ №{order.order_number}",
@@ -1005,9 +998,9 @@ async def courier_accept(callback: CallbackQuery):
         user = user_result.scalar_one_or_none()
         
         if order.admin_message_id:
-            await update_admin_post(bot, order.admin_message_id, order, items)
+            await update_admin_post(order.admin_message_id, order, items)
         
-        await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} передан курьеру 🚴")
+        await notify_user(user.tg_id, f"Ваш заказ №{order.order_number} передан курьеру 🚴")
         
         await callback.answer("✅ Qabul qilindi")
 
@@ -1035,9 +1028,9 @@ async def courier_delivered(callback: CallbackQuery):
         user = user_result.scalar_one_or_none()
         
         if order.admin_message_id:
-            await update_admin_post(bot, order.admin_message_id, order, items)
+            await update_admin_post(order.admin_message_id, order, items)
         
-        await notify_user(bot, user.tg_id, f"Ваш заказ №{order.order_number} успешно доставлен 🎉\n\nСпасибо!")
+        await notify_user(user.tg_id, f"Ваш заказ №{order.order_number} успешно доставлен 🎉\n\nСпасибо!")
         
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.answer("✅ Yetkazildi!")
@@ -1095,7 +1088,6 @@ async def api_validate_promo(request: Request, session: AsyncSession = Depends(g
     
     return promo
 
-# Webhook endpoint
 @app.post(WEBHOOK_PATH)
 async def webhook_handler(request: Request):
     """Handle incoming updates from Telegram"""
@@ -1204,14 +1196,16 @@ async def on_startup():
     try:
         logger.info("🚀 Starting FIESTA Delivery System...")
         
+        # Initialize bot
+        if not init_bot():
+            raise Exception("Bot initialization failed")
+        
         # Initialize database
-        await init_db()
+        if not await init_db():
+            raise Exception("Database initialization failed")
         
         # Seed demo data
         await seed_demo_data()
-        
-        # Register router
-        dp.include_router(router)
         
         # Set webhook
         await bot.delete_webhook(drop_pending_updates=True)
@@ -1236,8 +1230,9 @@ async def on_startup():
 async def on_shutdown():
     """Cleanup on shutdown"""
     try:
-        await bot.delete_webhook()
-        await bot.session.close()
+        if bot:
+            await bot.delete_webhook()
+            await bot.session.close()
         logger.info("👋 System shutdown complete")
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
