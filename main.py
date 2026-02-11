@@ -62,7 +62,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fast import Depends, Fast, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -1406,7 +1406,7 @@ async def courier_delivered(call: CallbackQuery, session: AsyncSession, bot: Bot
 # FastAPI mini backend
 # ---------------------------
 api = FastAPI(title="FIESTA API")
-
+app = api
 async def api_session() -> AsyncSession:
     async with SessionLocal() as s:
         yield s
