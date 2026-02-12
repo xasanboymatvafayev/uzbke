@@ -1,20 +1,7 @@
-# ==================== TELEGRAM BOT ====================
-aiogram
-
-# ==================== DATABASE ====================
-SQLAlchemy
-asyncpg
-alembic
-
-# ==================== REDIS ====================
-redis
-
-# ==================== API SERVER ====================
-fastapi
-uvicorn[standard]
+aiogram==3.x 
+sqlalchemy[asyncio] 
+asyncpg 
+redis 
+fastapi 
+uvicorn 
 python-multipart
-
-# ==================== UTILITIES ====================
-python-dotenv
-pydantic
-pydantic-settings
